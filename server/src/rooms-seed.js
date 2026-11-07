@@ -38,6 +38,7 @@ function plaza() {
   rect(g, 8, 18, 1, 2, ':');
   rect(g, 4, 20, 10, 1, ':');
   rect(g, 21, 21, 11, 1, ':');
+  rect(g, 37, 10, 1, 2, ':'); // path to the Sports Park gate on the east edge
   // Fishing dock: planks out over the pond (the fishing spot sits on the end).
   rect(g, 30, 16, 3, 5, ',');
   // Trees: a dense edge on both sides plus a few in the open.
@@ -49,7 +50,7 @@ function plaza() {
   for (const [x, y] of trees) g[y][x] = '#';
   return {
     id: 'plaza',
-    seedVersion: 3,
+    seedVersion: 4,
     name: 'Forest Village',
     width: W,
     height: H,
@@ -58,6 +59,7 @@ function plaza() {
     portals: [
       { x: 19, y: 9, w: 2, h: 1, to: 'dojo', tx: 20, ty: 20, label: 'Main Dojo' },
       { x: 6, y: 9, w: 2, h: 1, to: 'ramen', tx: 20, ty: 20, label: 'Ramen House' },
+      { x: 37, y: 10, w: 1, h: 2, to: 'sports-park', tx: 1, ty: 13, label: 'Sports Park' },
     ],
     // Minigame spots (pavilions). Admins add, move or remove these in the Map Editor.
     minigames: [
@@ -135,10 +137,51 @@ function ramen() {
   });
 }
 
+// Sports Park: east of the Forest Village. Four pitches: soccer, tennis, basketball and a
+// go-kart track. The courts are flat "court" / "track" props drawn over the grass.
+function sportsPark() {
+  const g = grid('g');
+  rect(g, 0, 0, W, 3, '#'); // tree line along the top
+  rect(g, 0, 3, 1, H - 3, '#'); // west edge, gap at the gate
+  rect(g, 39, 3, 1, H - 3, '#'); // east edge
+  rect(g, 0, H - 1, W, 1, '#'); // south edge
+  rect(g, 0, 13, 1, 2, ':'); // gate (portal back to the village)
+  rect(g, 1, 13, 38, 2, ':'); // main walkway
+  const trees = [];
+  for (let y = 3; y < H - 1; y++) for (const x of [0, W - 1]) if (g[y][x] === '#') trees.push({ type: 'tree', x, y, style: y % 2 ? 'pine' : 'leafy' });
+  for (let x = 2; x < W - 2; x += 3) if (g[H - 1][x] === '#') trees.push({ type: 'tree', x, y: H - 1, style: x % 2 ? 'leafy' : 'pine' });
+  return {
+    id: 'sports-park',
+    name: 'Sports Park',
+    width: W,
+    height: H,
+    tiles: rows(g),
+    spawn: { x: 4, y: 14 },
+    portals: [{ x: 0, y: 13, w: 1, h: 2, to: 'plaza', tx: 36, ty: 10, label: 'Forest Village' }],
+    minigames: [],
+    props: [
+      { type: 'forest', x: 0, y: 0, w: W, h: 3 },
+      ...trees,
+      { type: 'court', sport: 'soccer', x: 2, y: 3, w: 16, h: 8 },
+      { type: 'court', sport: 'tennis', x: 21, y: 3, w: 12, h: 6 },
+      { type: 'court', sport: 'basketball', x: 2, y: 16, w: 10, h: 6 },
+      { type: 'track', x: 16, y: 16, w: 20, h: 6 },
+      { type: 'sign', x: 9, y: 12, text: 'Soccer Field' },
+      { type: 'sign', x: 27, y: 12, text: 'Tennis Court' },
+      { type: 'sign', x: 7, y: 15, text: 'Basketball' },
+      { type: 'sign', x: 26, y: 15, text: 'Go-Kart Track' },
+      { type: 'sign', x: 36, y: 12, text: 'Sports Park' },
+      { type: 'lantern', x: 14, y: 12 },
+      { type: 'lantern', x: 34, y: 15 },
+      { type: 'lantern', x: 14, y: 15 },
+    ],
+  };
+}
+
 // Bump SEED_VERSION and set seedVersion on a room to push a new starter layout to
 // existing servers on their next start (db.js keeps the old layout in room_versions).
 function seedRooms() {
-  return [plaza(), dojo(), ramen()];
+  return [plaza(), dojo(), ramen(), sportsPark()];
 }
-seedRooms.SEED_VERSION = 3;
+seedRooms.SEED_VERSION = 4;
 module.exports = seedRooms;

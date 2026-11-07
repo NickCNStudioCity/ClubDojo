@@ -176,10 +176,95 @@
     ctx.fillText(text, cx, y + h / 2 + 0.5);
   }
 
+  // Flat sports surfaces, drawn over the grass. They are flat, so they sit under everything.
+  function drawCourt(ctx, p, x, y, w, h, T) {
+    const lw = Math.max(1.5, T * 0.07);
+    const inset = T * 0.3;
+    const cx = x + w / 2, cy = y + h / 2;
+    ctx.save();
+    ctx.lineWidth = lw;
+    ctx.strokeStyle = 'rgba(255,255,255,.95)';
+    if (p.sport === 'soccer') {
+      const stripes = 8, sw = w / stripes;
+      for (let i = 0; i < stripes; i++) { ctx.fillStyle = i % 2 ? '#66b653' : '#5aa948'; ctx.fillRect(x + i * sw, y, sw + 0.5, h); }
+      ctx.strokeRect(x + inset, y + inset, w - inset * 2, h - inset * 2);
+      ctx.beginPath(); ctx.moveTo(cx, y + inset); ctx.lineTo(cx, y + h - inset); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, Math.min(w, h) * 0.12, 0, Math.PI * 2); ctx.stroke();
+      const bw = w * 0.16, bh = h * 0.6;
+      ctx.strokeRect(x + inset, cy - bh / 2, bw, bh);
+      ctx.strokeRect(x + w - inset - bw, cy - bh / 2, bw, bh);
+      // Goals stand just outside each end line.
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(x + inset - T * 0.35, cy - h * 0.12, T * 0.35, h * 0.24);
+      ctx.fillRect(x + w - inset, cy - h * 0.12, T * 0.35, h * 0.24);
+    } else if (p.sport === 'basketball') {
+      ctx.fillStyle = '#d7733a';
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x + inset, y + inset, w - inset * 2, h - inset * 2);
+      ctx.beginPath(); ctx.moveTo(cx, y + inset); ctx.lineTo(cx, y + h - inset); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, Math.min(w, h) * 0.12, 0, Math.PI * 2); ctx.stroke();
+      const kw = w * 0.18, kh = h * 0.46;
+      ctx.fillStyle = 'rgba(255,255,255,.18)';
+      ctx.fillRect(x + inset, cy - kh / 2, kw, kh);
+      ctx.fillRect(x + w - inset - kw, cy - kh / 2, kw, kh);
+      ctx.strokeRect(x + inset, cy - kh / 2, kw, kh);
+      ctx.strokeRect(x + w - inset - kw, cy - kh / 2, kw, kh);
+      // Hoops: a backboard and an orange rim at each end.
+      for (const [bx, dir] of [[x + T * 0.2, 1], [x + w - T * 0.2, -1]]) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(bx - (dir > 0 ? 0 : lw), cy - T * 0.45, lw * 1.5, T * 0.9);
+        ctx.strokeStyle = '#ff5a1f'; ctx.lineWidth = lw * 1.2;
+        ctx.beginPath(); ctx.arc(bx + dir * T * 0.32, cy, T * 0.16, 0, Math.PI * 2); ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,.95)'; ctx.lineWidth = lw;
+      }
+    } else if (p.sport === 'tennis') {
+      ctx.fillStyle = '#3b7fc4';
+      ctx.fillRect(x, y, w, h);
+      const iw = w - inset * 2, ih = h - inset * 2;
+      ctx.strokeRect(x + inset, y + inset, iw, ih); // doubles lines
+      const sx = x + inset + iw * 0.08, sw2 = iw * 0.84; // singles sidelines
+      ctx.strokeRect(sx, y + inset, sw2, ih);
+      ctx.beginPath(); ctx.moveTo(sx + sw2 * 0.27, y + inset); ctx.lineTo(sx + sw2 * 0.27, y + h - inset); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(sx + sw2 * 0.73, y + inset); ctx.lineTo(sx + sw2 * 0.73, y + h - inset); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(sx, cy); ctx.lineTo(sx + sw2, cy); ctx.stroke();
+      // Net across the middle, with posts.
+      ctx.fillStyle = 'rgba(30,30,30,.35)';
+      ctx.fillRect(cx - lw * 0.6, y + inset - T * 0.2, lw * 1.2, ih + T * 0.4);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(cx - lw * 0.6, y + inset - T * 0.2, lw * 1.2, lw * 1.2);
+      ctx.fillRect(cx - lw * 0.6, y + h - inset + T * 0.2 - lw * 1.2, lw * 1.2, lw * 1.2);
+    }
+    ctx.restore();
+  }
+
+  // Oval go-kart track: kerbs, asphalt, an infield of grass, a dashed racing line and a finish line.
+  function drawKartTrack(ctx, x, y, w, h, T) {
+    const r = Math.min(w, h) * 0.45; // w and h are already in pixels
+    ctx.save();
+    ctx.fillStyle = '#f4f4f4';
+    roundRect(ctx, x, y, w, h, r); ctx.fill();
+    ctx.fillStyle = '#4a4f57';
+    roundRect(ctx, x + T * 0.2, y + T * 0.2, w - T * 0.4, h - T * 0.4, r - T * 0.2); ctx.fill();
+    ctx.fillStyle = '#7cba61';
+    roundRect(ctx, x + T * 1.2, y + T * 1.2, w - T * 2.4, h - T * 2.4, r - T); ctx.fill();
+    ctx.setLineDash([T * 0.35, T * 0.3]);
+    ctx.strokeStyle = 'rgba(255,255,255,.85)';
+    ctx.lineWidth = Math.max(1.5, T * 0.06);
+    roundRect(ctx, x + T * 0.7, y + T * 0.7, w - T * 1.4, h - T * 1.4, r - T * 0.5); ctx.stroke();
+    ctx.setLineDash([]);
+    // Checkered finish line across the top straight.
+    const fx = x + w * 0.5 - T * 0.25, fy = y + T * 0.2, cell = T * 0.25;
+    for (let i = 0; i < 2; i++) for (let j = 0; j < 4; j++) {
+      ctx.fillStyle = (i + j) % 2 ? '#ffffff' : '#222222';
+      ctx.fillRect(fx + i * cell, fy + j * cell, cell, cell);
+    }
+    ctx.restore();
+  }
+
   // Props: each returns its depth (bottom edge in tile units) and a draw function.
   function propDrawable(p, T, time) {
     const x = p.x * T, y = p.y * T, w = (p.w || 1) * T, h = (p.h || 1) * T;
-    const depth = p.type === 'mountains' || p.type === 'forest' || p.type === 'wall' ? -1 : p.y + (p.h || 1);
+    const depth = p.type === 'mountains' || p.type === 'forest' || p.type === 'wall' || p.type === 'court' || p.type === 'track' ? -1 : p.y + (p.h || 1);
     const draw = {
       building(ctx) {
         ctx.fillStyle = 'rgba(0,0,0,.12)';
@@ -316,6 +401,8 @@
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(p.text || '', cx, y - T * 0.42);
       },
+      court(ctx) { drawCourt(ctx, p, x, y, w, h, T); },
+      track(ctx) { drawKartTrack(ctx, x, y, w, h, T); },
       npc(ctx) {
         drawNinja(ctx, { x: p.x + 0.5, y: p.y + 0.5, color: '#f3f8fb', headband: '#f5b82e', belt: 'black' }, T, time);
         drawLabel(ctx, p.name || 'Sensei', x + T / 2, y + T * 0.75, T, { bg: 'rgba(122,59,46,.85)' });
