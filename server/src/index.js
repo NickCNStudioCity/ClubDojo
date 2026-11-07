@@ -37,10 +37,18 @@ function broadcastAddress(address, netmask) {
   return a.map((v, i) => (v & m[i]) | (~m[i] & 255)).join('.');
 }
 
+// Running from source: server/data. Running as the packaged ClubDojo-Server.exe: a
+// ClubDojo-Data folder next to the exe, so the database is easy to find and back up.
+function defaultDataDir() {
+  let packaged = false;
+  try { packaged = require('node:sea').isSea(); } catch {}
+  return packaged ? path.join(path.dirname(process.execPath), 'ClubDojo-Data') : path.join(__dirname, '..', 'data');
+}
+
 function start(options = {}) {
   const config = {
     port: Number(options.port || process.env.CLUBDOJO_PORT || P.DEFAULT_PORT),
-    dataDir: options.dataDir || process.env.CLUBDOJO_DATA || path.join(__dirname, '..', 'data'),
+    dataDir: options.dataDir || process.env.CLUBDOJO_DATA || defaultDataDir(),
     maxPlayers: Number(options.maxPlayers || process.env.CLUBDOJO_MAX_PLAYERS || 30),
     serverName: options.serverName || process.env.CLUBDOJO_NAME || `${os.hostname()} Dojo`,
     discovery: options.discovery ?? process.env.CLUBDOJO_DISCOVERY !== '0',
@@ -612,15 +620,20 @@ function start(options = {}) {
   };
 }
 
-module.exports = { start };
-
-if (require.main === module) {
+// Command-line entry: start, print the banner, save and close cleanly on Ctrl+C.
+function runCli() {
   const server = start();
   server.ready.catch((e) => {
     console.error(e.code === 'EADDRINUSE' ? `Port ${server.config.port} is already in use. Is another ClubDojo server running?` : e);
-    process.exit(1);
+    // Keep a double-clicked console window open long enough to read the error.
+    setTimeout(() => process.exit(1), 15000);
   });
-  const shutdown = () => { console.log('\nSaving and shutting down...'); server.close().then(() => process.exit(0)); };
+  server.ready.then(() => console.log('  Press Ctrl+C to save and stop the server.\n'));
+  const shutdown = () => { console.log('\nSaving and shutting down...');server.close().then(() => process.exit(0)); };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }
+
+module.exports = { start, runCli };
+
+if (require.main === module) runCli();

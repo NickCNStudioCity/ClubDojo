@@ -1,7 +1,7 @@
 {
   "name": "clubdojo-admin-client",
   "productName": "ClubDojo Admin",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "main": "main.js",
   "scripts": { "start": "electron ." },
