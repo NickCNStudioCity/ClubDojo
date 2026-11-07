@@ -7,7 +7,7 @@ function grid(fill) {
   return Array.from({ length: H }, () => Array(W).fill(fill));
 }
 function rect(g, x, y, w, h, ch) {
-  for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) if (g[j] && i >= 0 && i < W) g[j][i] = ch;
+  for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) if (g[j] && i >= 0 && i < g[j].length) g[j][i] = ch;
 }
 function rows(g) {
   return g.map((r) => r.join(''));
@@ -155,7 +155,7 @@ function sportsPark() {
   return {
     id: 'sports-park',
     name: 'Sports Park',
-    seedVersion: 5, // widened for the football field; existing servers pick it up
+    seedVersion: 6, // v5 widened it for the football field; v6 fixes the walkway and edges past column 40
     width: SW,
     height: H,
     tiles: rows(g),
@@ -194,5 +194,5 @@ function sportsPark() {
 function seedRooms() {
   return [plaza(), dojo(), ramen(), sportsPark()];
 }
-seedRooms.SEED_VERSION = 5;
+seedRooms.SEED_VERSION = 6;
 module.exports = seedRooms;

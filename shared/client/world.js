@@ -233,6 +233,28 @@
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(cx - lw * 0.6, y + inset - T * 0.2, lw * 1.2, lw * 1.2);
       ctx.fillRect(cx - lw * 0.6, y + h - inset + T * 0.2 - lw * 1.2, lw * 1.2, lw * 1.2);
+    } else if (p.sport === 'football') {
+      // Gridiron: striped turf, an end zone at each side, yard lines and yellow goal posts.
+      const ez = w * 0.1, fx = x + ez, fw = w - ez * 2;
+      const stripes = 10, sw = fw / stripes;
+      for (let i = 0; i < stripes; i++) { ctx.fillStyle = i % 2 ? '#4f9e45' : '#5aab4f'; ctx.fillRect(fx + i * sw, y, sw + 0.5, h); }
+      ctx.fillStyle = '#2f6fd1'; ctx.fillRect(x, y, ez, h);
+      ctx.fillStyle = '#c0392b'; ctx.fillRect(x + w - ez, y, ez, h);
+      ctx.strokeRect(x + inset, y + inset, w - inset * 2, h - inset * 2);
+      for (let i = 0; i <= stripes; i++) {
+        ctx.beginPath(); ctx.moveTo(fx + i * sw, y + inset); ctx.lineTo(fx + i * sw, y + h - inset); ctx.stroke();
+      }
+      // Hash marks along the middle.
+      for (let i = 0; i < stripes * 2; i++) {
+        const hx = fx + (i + 0.5) * sw / 2;
+        ctx.beginPath(); ctx.moveTo(hx, cy - h * 0.12); ctx.lineTo(hx, cy - h * 0.06); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(hx, cy + h * 0.06); ctx.lineTo(hx, cy + h * 0.12); ctx.stroke();
+      }
+      ctx.strokeStyle = '#f5d33b'; ctx.lineWidth = lw * 1.6;
+      for (const [gx, dir] of [[x + inset * 0.6, 1], [x + w - inset * 0.6, -1]]) {
+        ctx.beginPath(); ctx.moveTo(gx, cy - h * 0.18); ctx.lineTo(gx, cy + h * 0.18); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(gx, cy); ctx.lineTo(gx + dir * T * 0.3, cy); ctx.stroke();
+      }
     }
     ctx.restore();
   }
