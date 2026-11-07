@@ -376,8 +376,78 @@
     });
   }
 
+  function drawSpotPadAndStatus(ctx, sp, T, time, status, labelX, labelY) {
+    const pad = P.spotPad(sp);
+    const glow = 0.35 + Math.sin(time / 380) * 0.15;
+    ctx.strokeStyle = `rgba(245,184,46,${glow + 0.3})`;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 3]);
+    roundRect(ctx, pad.x * T + 3, pad.y * T + 3, T - 6, T - 6, T * 0.25); ctx.stroke();
+    ctx.setLineDash([]);
+    if (status && status.count) {
+      const label = status.phase === 'lobby' ? `${status.count}/${status.max} waiting` : `${status.count} playing`;
+      drawLabel(ctx, label, labelX, labelY, T, { bg: status.phase === 'lobby' ? 'rgba(63,191,127,.92)' : 'rgba(232,69,60,.92)' });
+    }
+  }
+
+  // Fishing spot: drawn as the end of a wooden dock over the water instead of a pavilion.
+  function dockDrawable(sp, T, time, status) {
+    const { w, h } = P.MINIGAME_SPOT;
+    const x = sp.x * T, y = sp.y * T, W = w * T, H = h * T;
+    return {
+      depth: sp.y + h,
+      draw(ctx) {
+        // posts in the water, with ripples
+        const ripple = Math.sin(time / 500) * T * 0.04;
+        for (const px of [x + T * 0.12, x + W - T * 0.12]) {
+          ctx.strokeStyle = 'rgba(255,255,255,.4)';
+          ctx.lineWidth = Math.max(1, T * 0.05);
+          ctx.beginPath(); ctx.ellipse(px, y + H + T * 0.05, T * 0.2 + ripple, T * 0.07, 0, 0, Math.PI * 2); ctx.stroke();
+          ctx.fillStyle = '#5b3a22';
+          ctx.fillRect(px - T * 0.08, y + T * 0.1, T * 0.16, H);
+        }
+        // deck planks
+        ctx.fillStyle = 'rgba(0,0,0,.18)';
+        ctx.fillRect(x + T * 0.05, y + T * 0.3, W - T * 0.1, H - T * 0.2);
+        for (let i = 0; i < 5; i++) {
+          ctx.fillStyle = i % 2 ? '#b98a5c' : '#c39363';
+          ctx.fillRect(x + T * 0.05, y + T * 0.15 + i * (H - T * 0.3) / 5, W - T * 0.1, (H - T * 0.3) / 5 + 0.5);
+        }
+        ctx.fillStyle = 'rgba(80,45,20,.3)';
+        for (let i = 1; i < 5; i++) ctx.fillRect(x + T * 0.05, y + T * 0.15 + i * (H - T * 0.3) / 5, W - T * 0.1, 1);
+        // mooring posts on the corners
+        ctx.fillStyle = '#6b4a35';
+        for (const px of [x + T * 0.05, x + W - T * 0.3]) {
+          roundRect(ctx, px, y - T * 0.1, T * 0.25, T * 0.45, T * 0.08); ctx.fill();
+        }
+        // bucket
+        ctx.fillStyle = '#4f6d7a';
+        roundRect(ctx, x + W - T * 0.9, y + T * 0.75, T * 0.4, T * 0.4, T * 0.08); ctx.fill();
+        ctx.fillStyle = '#2f4650';
+        ctx.fillRect(x + W - T * 0.9, y + T * 0.75, T * 0.4, T * 0.08);
+        // rod leaning out over the water, line bobbing
+        const tipX = x + T * 0.2, tipY = y - T * 0.9;
+        ctx.strokeStyle = '#7a4a26';
+        ctx.lineWidth = Math.max(1.5, T * 0.07);
+        ctx.beginPath(); ctx.moveTo(x + T * 0.9, y + T * 0.9); ctx.lineTo(tipX, tipY); ctx.stroke();
+        const bob = Math.sin(time / 420) * T * 0.06;
+        ctx.strokeStyle = 'rgba(255,255,255,.75)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(tipX, tipY); ctx.lineTo(tipX - T * 0.35, y - T * 0.15 + bob); ctx.stroke();
+        ctx.fillStyle = '#e8453c';
+        ctx.beginPath(); ctx.arc(tipX - T * 0.35, y - T * 0.15 + bob, T * 0.09, 0, Math.PI * 2); ctx.fill();
+        // sign with the game icon
+        ctx.font = `${T * 0.7}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(sp.icon || '🎣', x + W / 2, y + H * 0.45);
+        drawSpotPadAndStatus(ctx, sp, T, time, status, x + W / 2, y - T * 1.05);
+      },
+    };
+  }
+
   // Minigame pavilion: footprint MINIGAME_SPOT (3x2), pad tile in front.
   function spotDrawable(sp, T, time, status) {
+    if (sp.game === 'fishing') return dockDrawable(sp, T, time, status);
     const { w, h } = P.MINIGAME_SPOT;
     const x = sp.x * T, y = sp.y * T, W = w * T, H = h * T;
     return {
@@ -406,18 +476,7 @@
         ctx.font = `${T * 0.75}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(sp.icon || '🥋', x + W / 2, y + H * 0.48);
-        // pad
-        const pad = P.spotPad(sp);
-        const glow = 0.35 + Math.sin(time / 380) * 0.15;
-        ctx.strokeStyle = `rgba(245,184,46,${glow + 0.3})`;
-        ctx.lineWidth = 2;
-        ctx.setLineDash([4, 3]);
-        roundRect(ctx, pad.x * T + 3, pad.y * T + 3, T - 6, T - 6, T * 0.25); ctx.stroke();
-        ctx.setLineDash([]);
-        if (status && status.count) {
-          const label = status.phase === 'lobby' ? `${status.count}/${status.max} waiting` : `${status.count} playing`;
-          drawLabel(ctx, label, x + W / 2, y - T * 1.05, T, { bg: status.phase === 'lobby' ? 'rgba(63,191,127,.92)' : 'rgba(232,69,60,.92)' });
-        }
+        drawSpotPadAndStatus(ctx, sp, T, time, status, x + W / 2, y - T * 1.05);
       },
     };
   }

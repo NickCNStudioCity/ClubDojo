@@ -196,7 +196,7 @@ ClubDojoMinigames.register({
           notice('Go!');
         } else if (data.type === 'state') {
           for (const [id, v] of Object.entries(data.players)) {
-            const sl = sleds.get(id);
+            const sl = sleds.get(Number(id)); // JSON object keys arrive as strings
             if (!sl) continue;
             sl.x = v[0]; sl.y = v[1]; sl.finished = !!v[2]; sl.stunned = !!v[3]; sl.boosted = !!v[4];
           }
@@ -213,7 +213,7 @@ ClubDojoMinigames.register({
           held.left = held.right = false;
           setDir(0);
           for (const [id, v] of Object.entries(data.players || {})) {
-            const sl = sleds.get(id);
+            const sl = sleds.get(Number(id));
             if (sl) { sl.x = v[0]; sl.y = v[1]; }
           }
         }
