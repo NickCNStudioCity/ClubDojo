@@ -6,7 +6,7 @@
   const BUBBLE_MS = 6000;
   const EMOTE_MS = 2500;
 
-  const COVERING_PROPS = new Set(['mountains', 'building', 'wall', 'counter', 'table', 'tree', 'dummy', 'npc']);
+  const COVERING_PROPS = new Set(['forest', 'mountains', 'building', 'wall', 'counter', 'table', 'tree', 'dummy', 'npc']);
 
   function hash(x, y) {
     let h = (x * 374761393 + y * 668265263) | 0;
@@ -50,6 +50,36 @@
         ctx.fillRect(px, py, T + 0.5, T + 0.5);
         if (n < 0.06) { ctx.fillStyle = '#dcebf3'; ctx.fillRect(px + T * 0.3, py + T * 0.55, T * 0.25, T * 0.08); }
         break;
+      case 'g':
+        ctx.fillStyle = n > 0.85 ? '#80bf65' : '#7cba61';
+        ctx.fillRect(px, py, T + 0.5, T + 0.5);
+        if (n < 0.18) {
+          ctx.strokeStyle = 'rgba(46,105,52,.45)';
+          ctx.lineWidth = Math.max(1, T * 0.05);
+          ctx.beginPath();
+          ctx.moveTo(px + T * 0.3, py + T * 0.75); ctx.lineTo(px + T * 0.34, py + T * 0.55);
+          ctx.moveTo(px + T * 0.42, py + T * 0.75); ctx.lineTo(px + T * 0.48, py + T * 0.5);
+          ctx.stroke();
+        }
+        break;
+      case ':':
+        ctx.fillStyle = n > 0.7 ? '#cfae7c' : '#d6b685';
+        ctx.fillRect(px, py, T + 0.5, T + 0.5);
+        if (n < 0.25) { ctx.fillStyle = 'rgba(120,90,50,.35)'; ctx.beginPath(); ctx.arc(px + T * (0.25 + n * 2), py + T * 0.6, T * 0.06, 0, Math.PI * 2); ctx.fill(); }
+        break;
+      case 'f': {
+        ctx.fillStyle = '#7dbb62';
+        ctx.fillRect(px, py, T + 0.5, T + 0.5);
+        const petals = ['#ff7eb6', '#ffd23f', '#ffffff', '#b28dff'];
+        for (let i = 0; i < 3; i++) {
+          const fx = px + T * (0.2 + hash(x + i, y) * 0.6), fy = py + T * (0.2 + hash(x, y + i) * 0.6);
+          ctx.fillStyle = petals[Math.floor(hash(x * 3 + i, y) * petals.length)];
+          ctx.beginPath(); ctx.arc(fx, fy, T * 0.09, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#f5b82e';
+          ctx.beginPath(); ctx.arc(fx, fy, T * 0.035, 0, Math.PI * 2); ctx.fill();
+        }
+        break;
+      }
       case ',':
         ctx.fillStyle = y % 2 ? '#c99a6b' : '#c39363';
         ctx.fillRect(px, py, T + 0.5, T + 0.5);
@@ -91,6 +121,13 @@
         if (floor === ',') {
           ctx.fillStyle = '#6b4a35';
           ctx.fillRect(px, py, T + 0.5, T + 0.5);
+        } else if (floor === 'g' || floor === ':' || floor === 'f') {
+          ctx.fillStyle = '#7dbb62';
+          ctx.fillRect(px, py, T + 0.5, T + 0.5);
+          ctx.fillStyle = '#3f8a4a';
+          roundRect(ctx, px + T * 0.05, py + T * 0.2, T * 0.9, T * 0.75, T * 0.35); ctx.fill();
+          ctx.fillStyle = '#58a85c';
+          roundRect(ctx, px + T * 0.15, py + T * 0.12, T * 0.55, T * 0.45, T * 0.22); ctx.fill();
         } else {
           ctx.fillStyle = '#f4fafd';
           ctx.fillRect(px, py, T + 0.5, T + 0.5);
@@ -142,7 +179,7 @@
   // Props: each returns its depth (bottom edge in tile units) and a draw function.
   function propDrawable(p, T, time) {
     const x = p.x * T, y = p.y * T, w = (p.w || 1) * T, h = (p.h || 1) * T;
-    const depth = p.type === 'mountains' || p.type === 'wall' ? -1 : p.y + (p.h || 1);
+    const depth = p.type === 'mountains' || p.type === 'forest' || p.type === 'wall' ? -1 : p.y + (p.h || 1);
     const draw = {
       building(ctx) {
         ctx.fillStyle = 'rgba(0,0,0,.12)';
@@ -159,8 +196,7 @@
         ctx.quadraticCurveTo(x + w / 2, y - T * 0.6, x + T * 0.2, y + T * 0.7);
         ctx.closePath();
         ctx.fill();
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(x + T * 0.1, y + T * 0.55, w - T * 0.2, T * 0.18); // snow on the roof
+        if (p.snow) { ctx.fillStyle = '#ffffff'; ctx.fillRect(x + T * 0.1, y + T * 0.55, w - T * 0.2, T * 0.18); } // snow on the roof
         // door
         ctx.fillStyle = '#24130f';
         roundRect(ctx, x + w / 2 - T * 0.8, y + h - T * 1.8, T * 1.6, T * 1.8, T * 0.3);
@@ -177,6 +213,22 @@
         ctx.textBaseline = 'middle';
         ctx.fillStyle = '#fff';
         ctx.fillText(p.label || '', x + w / 2, y + T * 1.5);
+      },
+      forest(ctx) {
+        ctx.fillStyle = '#2f6d4f';
+        ctx.fillRect(x, y, w, h);
+        for (let row = 0; row < 3; row++) {
+          for (let i = -1; i <= (p.w || 1); i++) {
+            const tx = x + (i + (row % 2) * 0.5) * T * 1.4;
+            if (tx < x - T * 2 || tx > x + w + T) continue;
+            const base = y + T * (0.9 + row * 0.9);
+            const r = T * (0.95 + hash(i, row) * 0.35);
+            ctx.fillStyle = ['#244f3b', '#2f6d4f', '#3f8a5a'][row];
+            ctx.beginPath(); ctx.arc(tx, base, r, 0, Math.PI * 2); ctx.fill();
+          }
+        }
+        ctx.fillStyle = 'rgba(0,0,0,.12)';
+        ctx.fillRect(x, y + h - T * 0.18, w, T * 0.18);
       },
       mountains(ctx) {
         const g = ctx.createLinearGradient(0, y, 0, y + h);
@@ -214,6 +266,17 @@
       },
       tree(ctx) {
         const cx = x + T / 2;
+        if (p.style === 'leafy') {
+          ctx.fillStyle = 'rgba(0,0,0,.15)';
+          ctx.beginPath(); ctx.ellipse(cx, y + T * 0.9, T * 0.6, T * 0.2, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#6b4226';
+          ctx.fillRect(cx - T * 0.12, y + T * 0.2, T * 0.24, T * 0.75);
+          const blobs = [[0, -0.55, 0.62], [-0.38, -0.2, 0.45], [0.38, -0.2, 0.45], [0, -0.05, 0.5]];
+          for (const [dx, dy, r] of blobs) { ctx.fillStyle = '#3f8a4a'; ctx.beginPath(); ctx.arc(cx + dx * T, y + dy * T, r * T, 0, Math.PI * 2); ctx.fill(); }
+          ctx.fillStyle = '#58a85c';
+          ctx.beginPath(); ctx.arc(cx - T * 0.15, y - T * 0.7, T * 0.28, 0, Math.PI * 2); ctx.fill();
+          return;
+        }
         ctx.fillStyle = 'rgba(0,0,0,.12)';
         ctx.beginPath(); ctx.ellipse(cx, y + T * 0.9, T * 0.55, T * 0.18, 0, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#6b4226';
@@ -222,7 +285,7 @@
           const top = y - T * (1.4 - i * 0.55), base = y + T * (0.1 + i * 0.25), half = T * (0.35 + i * 0.18);
           ctx.fillStyle = '#2f6d4f';
           ctx.beginPath(); ctx.moveTo(cx, top); ctx.lineTo(cx + half, base); ctx.lineTo(cx - half, base); ctx.closePath(); ctx.fill();
-          ctx.fillStyle = '#ffffff';
+          ctx.fillStyle = p.snow ? '#ffffff' : '#3f8a5a';
           ctx.beginPath(); ctx.moveTo(cx, top); ctx.lineTo(cx + half * 0.45, top + (base - top) * 0.4); ctx.lineTo(cx - half * 0.45, top + (base - top) * 0.4); ctx.closePath(); ctx.fill();
         }
       },
@@ -306,49 +369,57 @@
     return draw ? { depth, draw } : null;
   }
 
+  // World units -> avatar pixels. n.x/n.y are tile coordinates (center of tile = +0.5).
   function drawNinja(ctx, n, T, time, opts = {}) {
-    const cx = n.x * T;
-    const feet = n.y * T + T * 0.45;
-    const bw = T * 0.78, bh = T * 1.15;
-    const bob = n.walking ? Math.abs(Math.sin(time / 90)) * T * 0.06 : 0;
-    const top = feet - bh - bob;
-    ctx.fillStyle = 'rgba(0,0,0,.18)';
-    ctx.beginPath(); ctx.ellipse(cx, feet, bw * 0.55, T * 0.16, 0, 0, Math.PI * 2); ctx.fill();
-    if (opts.you) {
-      ctx.strokeStyle = 'rgba(47,111,209,.8)';
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.ellipse(cx, feet, bw * 0.7, T * 0.22, 0, 0, Math.PI * 2); ctx.stroke();
-    }
-    // body
-    ctx.fillStyle = n.color || '#20262e';
-    roundRect(ctx, cx - bw / 2, top, bw, bh, bw * 0.45);
-    ctx.fill();
-    // face opening
-    ctx.fillStyle = '#f1d3b3';
-    roundRect(ctx, cx - bw * 0.36, top + bh * 0.2, bw * 0.72, bh * 0.17, bh * 0.07);
-    ctx.fill();
-    ctx.fillStyle = '#1b1b1b';
-    const look = n.facing || 0;
-    ctx.fillRect(cx - bw * 0.2 + look * bw * 0.06 - T * 0.04, top + bh * 0.25, T * 0.08, T * 0.08);
-    ctx.fillRect(cx + bw * 0.14 + look * bw * 0.06 - T * 0.04, top + bh * 0.25, T * 0.08, T * 0.08);
-    // headband with tails
-    ctx.fillStyle = n.headband || '#e8453c';
-    ctx.fillRect(cx - bw / 2 + bw * 0.06, top + bh * 0.1, bw * 0.88, bh * 0.07);
-    const tailDir = look >= 0 ? -1 : 1;
-    const wave = Math.sin(time / 200) * T * 0.05;
-    ctx.beginPath();
-    ctx.moveTo(cx + tailDir * bw * 0.42, top + bh * 0.12);
-    ctx.lineTo(cx + tailDir * bw * 0.8, top + bh * 0.08 + wave);
-    ctx.lineTo(cx + tailDir * bw * 0.78, top + bh * 0.18 + wave);
-    ctx.closePath();
-    ctx.fill();
-    // belt sash
-    const belt = P.beltById(n.belt);
-    ctx.fillStyle = belt.color;
-    ctx.fillRect(cx - bw / 2 + 1, top + bh * 0.66, bw - 2, bh * 0.09);
-    if (belt.id === 'white') { ctx.strokeStyle = 'rgba(0,0,0,.2)'; ctx.lineWidth = 1; ctx.strokeRect(cx - bw / 2 + 1, top + bh * 0.66, bw - 2, bh * 0.09); }
-    ctx.fillRect(cx + bw * 0.12, top + bh * 0.72, bw * 0.1, bh * 0.16);
-    return { top, feet, cx };
+    return window.ClubDojoAvatar.draw(ctx, n, {
+      x: n.x * T, y: n.y * T + T * 0.45, size: T, facing: n.facing || 0, walking: n.walking, time, you: opts.you,
+    });
+  }
+
+  // Minigame pavilion: footprint MINIGAME_SPOT (3x2), pad tile in front.
+  function spotDrawable(sp, T, time, status) {
+    const { w, h } = P.MINIGAME_SPOT;
+    const x = sp.x * T, y = sp.y * T, W = w * T, H = h * T;
+    return {
+      depth: sp.y + h,
+      draw(ctx) {
+        ctx.fillStyle = 'rgba(0,0,0,.15)';
+        ctx.beginPath(); ctx.ellipse(x + W / 2, y + H, W * 0.55, T * 0.35, 0, 0, Math.PI * 2); ctx.fill();
+        // platform
+        ctx.fillStyle = '#8a5a35';
+        roundRect(ctx, x + T * 0.1, y + H - T * 0.7, W - T * 0.2, T * 0.6, T * 0.12); ctx.fill();
+        ctx.fillStyle = '#a8713f';
+        ctx.fillRect(x + T * 0.1, y + H - T * 0.7, W - T * 0.2, T * 0.14);
+        // posts
+        ctx.fillStyle = '#5b3a22';
+        ctx.fillRect(x + T * 0.3, y + T * 0.2, T * 0.16, H - T * 0.6);
+        ctx.fillRect(x + W - T * 0.46, y + T * 0.2, T * 0.16, H - T * 0.6);
+        // roof in the game's color
+        ctx.fillStyle = sp.color || '#7a3b2e';
+        ctx.beginPath();
+        ctx.moveTo(x - T * 0.25, y + T * 0.45);
+        ctx.quadraticCurveTo(x + W / 2, y - T * 0.6, x + W + T * 0.25, y + T * 0.45);
+        ctx.lineTo(x + W - T * 0.1, y + T * 0.15);
+        ctx.quadraticCurveTo(x + W / 2, y - T * 0.85, x + T * 0.1, y + T * 0.15);
+        ctx.closePath(); ctx.fill();
+        // sign with the game icon
+        ctx.font = `${T * 0.75}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(sp.icon || '🥋', x + W / 2, y + H * 0.48);
+        // pad
+        const pad = P.spotPad(sp);
+        const glow = 0.35 + Math.sin(time / 380) * 0.15;
+        ctx.strokeStyle = `rgba(245,184,46,${glow + 0.3})`;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        roundRect(ctx, pad.x * T + 3, pad.y * T + 3, T - 6, T - 6, T * 0.25); ctx.stroke();
+        ctx.setLineDash([]);
+        if (status && status.count) {
+          const label = status.phase === 'lobby' ? `${status.count}/${status.max} waiting` : `${status.count} playing`;
+          drawLabel(ctx, label, x + W / 2, y - T * 1.05, T, { bg: status.phase === 'lobby' ? 'rgba(63,191,127,.92)' : 'rgba(232,69,60,.92)' });
+        }
+      },
+    };
   }
 
   class World {
@@ -386,7 +457,8 @@
     onMouse(e) {
       this.hover = this.tileFromEvent(e);
       const portal = this.hover && P.portalAt(this.room, this.hover.x, this.hover.y);
-      this.canvas.style.cursor = portal ? 'pointer' : this.hover && P.isWalkable(this.room, this.hover.x, this.hover.y) ? 'crosshair' : 'default';
+      const spot = this.hover && P.spotAt(this.room, this.hover.x, this.hover.y);
+      this.canvas.style.cursor = portal || spot ? 'pointer' : this.hover && P.isWalkable(this.room, this.hover.x, this.hover.y) ? 'crosshair' : 'default';
     }
 
     layout() {
@@ -408,6 +480,7 @@
 
     setRoom(room, players, youId) {
       this.room = room;
+      this.spotStatus = (room && room.spotStatus) || {};
       this.youId = youId;
       this.players.clear();
       for (const p of players) this.addPlayer(p);
@@ -522,6 +595,7 @@
         const d = propDrawable(p, T, now);
         if (d) drawables.push(d);
       }
+      for (const sp of room.minigames || []) drawables.push(spotDrawable(sp, T, now, (this.spotStatus || {})[sp.id]));
       for (const n of this.players.values()) {
         drawables.push({
           depth: n.py + 0.45,
@@ -537,6 +611,8 @@
       for (const d of drawables) d.draw(ctx);
 
       // Overlays above everything: door labels, bubbles, emotes
+      const hoverSpot = this.hover && P.spotAt(room, this.hover.x, this.hover.y);
+      if (hoverSpot) drawLabel(ctx, `Play ${hoverSpot.name || hoverSpot.game}`, (hoverSpot.x + P.MINIGAME_SPOT.w / 2) * T, hoverSpot.y * T - T * 1.7, T, { bg: 'rgba(245,184,46,.95)', color: '#1b2a36' });
       if (hoverPortal) drawLabel(ctx, `To ${hoverPortal.label}`, (hoverPortal.x + (hoverPortal.w || 1) / 2) * T, hoverPortal.y * T - T * 0.9, T, { bg: 'rgba(245,184,46,.95)', color: '#1b2a36' });
       for (const n of this.players.values()) {
         const cx = n.px * T;
@@ -601,7 +677,8 @@
     drawTiles(ctx, room, T, now);
     drawPortals(ctx, room, T, now, null);
     if (opts.props !== false) {
-      const list = (room.props || []).map((p) => propDrawable(p, T, now)).filter(Boolean).sort((a, b) => a.depth - b.depth);
+      const list = [...(room.props || []).map((p) => propDrawable(p, T, now)), ...(room.minigames || []).map((sp) => spotDrawable(sp, T, now, null))]
+        .filter(Boolean).sort((a, b) => a.depth - b.depth);
       for (const d of list) d.draw(ctx);
     }
   };

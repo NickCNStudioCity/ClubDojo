@@ -10,6 +10,8 @@ const { WebSocketServer } = require('ws');
 const P = require('../../shared/protocol');
 const DB = require('./db');
 const filter = require('./filter');
+const minigameRegistry = require('./minigames/registry');
+const { createEngine } = require('./minigames/engine');
 
 const JOIN_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const IDLE_KICK_MS = 30 * 60 * 1000;
@@ -90,6 +92,16 @@ function start(options = {}) {
   const toAll = (msg) => { for (const s of authed()) send(s, msg); };
   const admins = () => authed().filter((s) => s.client === 'admin' && s.account.role === 'grandmaster');
 
+  // Minigames: one server-run lobby per spot on the map.
+  const minigames = createEngine({
+    db,
+    registry: minigameRegistry,
+    sendTo: (accountId, msg) => { const t = byAccount.get(accountId); if (t) send(t, msg); },
+    toRoom: (roomId, msg) => toRoom(roomId, msg),
+    onRewarded: (accountId) => refreshOnline(accountId),
+    log,
+  });
+
   function publicPlayer(s) {
     return {
       id: s.account.id, name: s.ninja.name, color: s.ninja.color, headband: s.ninja.headband,
@@ -105,7 +117,12 @@ function start(options = {}) {
   }
   function roomPayload(room) {
     const { id, name, width, height, tiles, portals, props, spawn, version } = room;
-    return { id, name, width, height, tiles, portals, props, spawn, version };
+    const info = new Map(minigameRegistry.list().map((g) => [g.id, g]));
+    const spots = (room.minigames || []).map((sp) => {
+      const g = info.get(sp.game) || {};
+      return { ...sp, name: g.name || sp.game, color: g.color || '#7a3b2e', icon: g.icon || '🥋' };
+    });
+    return { id, name, width, height, tiles, portals, props, spawn, version, minigames: spots, spotStatus: minigames.spotStatus(id) };
   }
   function worldSnapshot() {
     return {
@@ -146,6 +163,7 @@ function start(options = {}) {
 
   function enterRoom(s, roomId, x, y) {
     const room = rooms.get(roomId) || rooms.get('plaza') || rooms.values().next().value;
+    if (s.roomId !== room.id) minigames.leave(s.account.id, null);
     if (s.roomId) toRoom(s.roomId, { t: 'player:leave', id: s.account.id }, s);
     let px = x, py = y;
     if (px == null || !P.isWalkable(room, px, py) || P.portalAt(room, px, py)) ({ x: px, y: py } = spawnNear(room));
@@ -158,6 +176,7 @@ function start(options = {}) {
 
   function leaveWorld(s) {
     if (!s.account) return;
+    minigames.leave(s.account.id, null);
     savePosition(s);
     if (s.roomId) toRoom(s.roomId, { t: 'player:leave', id: s.account.id }, s);
     if (byAccount.get(s.account.id) === s) byAccount.delete(s.account.id);
@@ -187,13 +206,18 @@ function start(options = {}) {
     if (lookChanged) toRoom(s.roomId, { t: 'player:look', player: publicPlayer(s) });
   }
 
-  function rateLimited(ip) {
-    const now = Date.now();
-    const list = (loginAttempts.get(ip) || []).filter((t) => now - t < 60000);
-    list.push(now);
-    loginAttempts.set(ip, list);
-    return list.length > 8;
+  // Per-address limits over the last minute. Wrong passwords count toward 'login'; every
+  // sign-up counts toward 'register'. Successful logins never count, so a host PC running
+  // several clients (all from 127.0.0.1) is not locked out.
+  const RATE_LIMITS = { login: 8, register: 12 };
+  function recent(kind, ip) {
+    const key = `${kind}:${ip}`;
+    const list = (loginAttempts.get(key) || []).filter((t) => Date.now() - t < 60000);
+    loginAttempts.set(key, list);
+    return list;
   }
+  function rateLimited(kind, ip) { return recent(kind, ip).length >= RATE_LIMITS[kind]; }
+  function noteAttempt(kind, ip) { recent(kind, ip).push(Date.now()); }
 
   async function completeLogin(s, account) {
     const prev = onlineSession(account.id);
@@ -228,7 +252,8 @@ function start(options = {}) {
     async register(s, m) {
       if (!s.hello) fail('hello', 'Say hello first.');
       if (s.account) fail('authed', 'Already logged in.');
-      if (rateLimited(s.ip)) fail('rate', 'Too many attempts. Wait a minute.');
+      if (rateLimited('register', s.ip)) fail('rate', 'Too many new ninjas from this computer. Wait a minute.');
+      noteAttempt('register', s.ip);
       const username = String(m.username || '').trim();
       const password = String(m.password || '');
       const name = String(m.name || '').trim().replace(/\s+/g, ' ');
@@ -251,11 +276,12 @@ function start(options = {}) {
     async login(s, m) {
       if (!s.hello) fail('hello', 'Say hello first.');
       if (s.account) fail('authed', 'Already logged in.');
-      if (rateLimited(s.ip)) fail('rate', 'Too many attempts. Wait a minute.');
+      if (rateLimited('login', s.ip)) fail('rate', 'Too many wrong passwords. Wait a minute.');
       const username = String(m.username || '').trim();
       const account = db.findAccount(username);
       const ok = account && (await bcrypt.compare(String(m.password || ''), account.password_hash));
       if (!ok) {
+        noteAttempt('login', s.ip);
         db.logLogin(account ? account.id : null, username, false, s.ip, s.client);
         fail('bad_login', 'Wrong username or password.');
       }
@@ -268,6 +294,9 @@ function start(options = {}) {
     },
 
     move(s, m) {
+      const lobby = minigames.lobbyOf(s.account.id);
+      if (lobby && lobby.phase !== 'lobby') fail('busy', 'Finish or leave the minigame first.');
+      if (lobby) minigames.leave(s.account.id, null);
       const room = rooms.get(s.roomId);
       const x = Number(m.x), y = Number(m.y);
       if (!Number.isInteger(x) || !Number.isInteger(y)) fail('bad', 'Bad target.');
@@ -319,6 +348,34 @@ function start(options = {}) {
     },
 
     ping() { return { at: Date.now() }; },
+
+    // ---------- minigames ----------
+    // Every installed and planned game, where its spots are, and how full each lobby is.
+    'mg:list'(s) {
+      const counts = minigames.lobbyCounts();
+      const spots = [];
+      for (const r of rooms.values()) for (const sp of r.minigames || []) {
+        const key = P.spotKey(r.id, sp);
+        spots.push({ key, spotId: sp.id, roomId: r.id, roomName: r.name, game: sp.game, x: sp.x, y: sp.y, lobby: counts[key] || null });
+      }
+      return {
+        games: minigameRegistry.list().map((g) => ({ ...g, enabled: g.available ? minigames.settings(g.id).enabled : false })),
+        spots,
+        stats: db.minigameStats(s.account.id),
+      };
+    },
+    'mg:join'(s, m) {
+      const room = rooms.get(s.roomId);
+      const spot = (room.minigames || []).find((sp) => sp.id === m.spotId);
+      if (!spot) fail('bad', 'There is no minigame there.');
+      const pad = P.spotPad(spot);
+      if (Math.max(Math.abs(s.x - pad.x), Math.abs(s.y - pad.y)) > 1) fail('far', 'Walk up to the pavilion to join.');
+      return { lobby: minigames.join(s, room.id, spot) };
+    },
+    'mg:leave'(s) { minigames.leave(s.account.id, null); },
+    'mg:ready'(s, m) { return { lobby: minigames.setReady(s.account.id, m.ready) }; },
+    'mg:start'(s) { return { lobby: minigames.start(s.account.id) }; },
+    'mg:input'(s, m) { minigames.input(s.account.id, m.data); },
   };
 
   // Admin handlers: Grandmaster accounts on the admin client only. Every change is logged.
@@ -441,6 +498,7 @@ function start(options = {}) {
       const version = db.publishRoom(data.id, data, s.account.id);
       const room = { ...data, version };
       rooms.set(room.id, room);
+      minigames.syncRoom(room);
       audit(s, 'publishRoom', room.id, { version });
       // Re-seat everyone inside so they get the new layout (anyone on a now-blocked tile goes to spawn).
       for (const t of inRoom(room.id)) {
@@ -450,6 +508,15 @@ function start(options = {}) {
         send(t, { t: 'room:enter', room: roomPayload(room), you: t.account.id, players: inRoom(room.id).map(publicPlayer), updated: true });
       }
       return { message: `Published ${room.name} v${version}.`, version };
+    },
+
+    minigames() { return { games: minigames.adminList() }; },
+
+    setMinigame(s, m) {
+      if (!minigameRegistry.get(m.game)) fail('bad', 'That minigame is not installed.');
+      const next = minigames.setSettings(m.game, { enabled: m.enabled, multiplier: m.multiplier });
+      audit(s, 'setMinigame', m.game, { enabled: next.enabled, multiplier: next.multiplier });
+      return { message: `${minigameRegistry.get(m.game).name}: ${next.enabled ? 'open' : 'closed'}, rewards x${next.multiplier}.`, settings: next };
     },
 
     logs(s, m) { return { kind: m.kind, rows: db.readLog(m.kind, 300) }; },
@@ -497,7 +564,12 @@ function start(options = {}) {
     const data = { ...base, tiles, name: String(m.name || base.name).slice(0, 32) };
     delete data.version; delete data.hasDraft; delete data.draft;
     if (m.spawn) data.spawn = { x: Number(m.spawn.x), y: Number(m.spawn.y) };
-    if (!P.isWalkable(data, data.spawn.x, data.spawn.y)) fail('bad', 'The spawn point must be on a walkable tile.');
+    if (m.minigames !== undefined) data.minigames = validateSpots(data, m.minigames);
+    for (const sp of data.minigames || []) {
+      const pad = P.spotPad(sp);
+      if (P.portalAt(data, pad.x, pad.y) || !P.isWalkable(data, pad.x, pad.y)) fail('bad', `The tile in front of the ${gameName(sp.game)} pavilion must be walkable.`);
+    }
+    if (!P.isWalkable(data, data.spawn.x, data.spawn.y)) fail('bad', 'The spawn point must be on a walkable tile (not under a pavilion).');
     for (const p of data.portals) {
       const target = rooms.get(p.to);
       if (!target) continue;
@@ -506,6 +578,28 @@ function start(options = {}) {
       }
     }
     return data;
+  }
+
+  function gameName(id) { const g = minigameRegistry.list().find((x) => x.id === id); return g ? g.name : id; }
+
+  function validateSpots(room, list) {
+    if (!Array.isArray(list) || list.length > 12) fail('bad', 'A room can hold up to 12 minigame spots.');
+    const { w, h } = P.MINIGAME_SPOT;
+    const out = [];
+    const taken = new Set(list.map((o) => o && o.id).filter((id) => /^mg\d+$/.test(id || '')));
+    const used = new Set();
+    for (const raw of list) {
+      const x = Number(raw.x), y = Number(raw.y);
+      if (!minigameRegistry.get(raw.game)) fail('bad', `"${raw.game}" is not an installed minigame.`);
+      if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x + w > room.width || y + h >= room.height) fail('bad', 'A minigame spot is off the map.');
+      for (const o of out) if (x < o.x + w && o.x < x + w && y < o.y + h && o.y < y + h) fail('bad', 'Two minigame spots overlap.');
+      for (const p of room.portals) if (x < p.x + (p.w || 1) && p.x < x + w && y < p.y + (p.h || 1) && p.y < y + h) fail('bad', 'A minigame spot covers a door.');
+      let id = /^mg\d+$/.test(raw.id || '') && !used.has(raw.id) ? raw.id : null;
+      for (let n = 1; !id; n++) if (!taken.has(`mg${n}`) && !used.has(`mg${n}`)) id = `mg${n}`;
+      used.add(id);
+      out.push({ id, game: raw.game, x, y });
+    }
+    return out;
   }
 
   async function handle(s, raw) {
@@ -594,6 +688,7 @@ function start(options = {}) {
     log(`  Join code:  ${joinCode}`);
     log(`  Max ninjas: ${config.maxPlayers}`);
     log(`  Database:   ${db.file}`);
+    if (db.seedChanges.length) log(`  Starter rooms: ${db.seedChanges.join(', ')} (old layouts kept in history)`);
     if (firstAdmin) {
       log('');
       log('  First run: created a Grandmaster account for the admin client');
@@ -612,6 +707,7 @@ function start(options = {}) {
     ready: new Promise((resolve, reject) => { wss.once('listening', resolve); wss.once('error', reject); }),
     close() {
       clearInterval(ticker); clearInterval(heartbeat); clearInterval(discoveryTimer); clearTimeout(presenceTimer);
+      minigames.shutdown();
       for (const s of sessions) { savePosition(s); s.account = null; s.ws.terminate(); }
       closed = true;
       if (udp) try { udp.close(); } catch {}

@@ -80,12 +80,35 @@ Back up by copying `server/data/clubdojo.sqlite`, or use **Server > Back up now*
 - Admin: live room view with teleport, kick and broadcast; player search with coins, XP, belt, role, mute, ban and password reset; tile Map Editor with undo, drafts and publish (players in the room get the update live); chat, login and admin-action logs; server info, new join code, and backup.
 - Position, look and progress are saved per ninja.
 
+## In progress (after v1.0.0)
+
+- **Minigame framework.** A server engine runs every lobby (lobby, countdown, play, results), grants rewards and saves scores. A shared client host shows it all inside the game window. Each game is one server file plus one client file. **Dojo Memory** is the first game and the reference implementation. See [docs/minigames/README.md](docs/minigames/README.md).
+- **Minigame pavilions on the map.** Walk up to a pavilion to join its lobby. Admins place, re-assign and remove pavilions with the Map Editor's **Minigame pavilion** brush.
+- **Minigame list.** The Minigames menu shows installed and in-development games, where to find them, live lobby counts, and your best score.
+- **Admin Minigames tab.** Open or close each game, set reward multipliers, and see live lobbies and top scores.
+- **Character loading.** Minigames receive each player's loadout (look and accessory slots) and draw it with the shared avatar renderer. See [docs/minigames/character-loading.md](docs/minigames/character-loading.md).
+- **Forest Village hub.** The hub is now a forest with grass, dirt paths, flowers and a pond, replacing the Snow Plaza. Existing servers upgrade the hub automatically on start, and the old layout stays in the room history.
+- **Deferred.** Belt progression and rank-ups. See [docs/notes/belt-progression.md](docs/notes/belt-progression.md).
+
+This changes the protocol to version 2, so v1.0.0 clients are asked to update.
+
 ## Testing
 
 ```bash
 npm run smoke
 ```
 
-Starts a throwaway server and connects two players and an admin over real WebSockets: registration, join-code check, movement, doors, chat filter, announcements, teleport, rewards, mute, map publish, logs, backup, kick and persistence.
+Starts a throwaway server and connects players and an admin over real WebSockets. It covers:
+- accounts: registration, join-code check, kick, persistence
+- the world: movement, doors, chat filter, announcements, teleport, map publish
+- admin tools: rewards, mute, logs, backup
+- minigames: a full two-player Dojo Memory match with rewards, admin open/close, pavilion placement rules
+- the v1 → forest hub upgrade
+
+```bash
+npm run check:minigames
+```
+
+Checks every installed minigame without a server: the client file registers the right id, and matches end on their own with idle or random players (on simulated time).
 
 For quick UI work in a browser, `node scripts/dev-web.js` serves the pages at `http://localhost:5173/player-client/index.html` and `/admin-client/index.html` (no LAN discovery there).

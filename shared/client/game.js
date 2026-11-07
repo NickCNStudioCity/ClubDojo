@@ -13,7 +13,7 @@
       if (v == null || v === false) continue;
       if (k === 'class') el.className = v;
       else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
-      else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+      else if (k === 'style' && typeof v === 'object') { for (const [sk, sv] of Object.entries(v)) { if (sk.startsWith('--')) el.style.setProperty(sk, sv); else el.style[sk] = sv; } }
       else el.setAttribute(k, v === true ? '' : v);
     }
     for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
@@ -49,9 +49,18 @@
           state.pendingPortal = false;
           conn.request('portal').catch((e) => toast(e.message, true));
         }
+        if (state.pendingSpot) {
+          const spot = (state.room.minigames || []).find((sp) => sp.id === state.pendingSpot);
+          state.pendingSpot = null;
+          const pad = spot && P.spotPad(spot);
+          if (pad && pad.x === t.x && pad.y === t.y) minigames.join(spot.id);
+        }
       },
     });
     world.start();
+
+    // Minigames run in an overlay inside this window (shared/client/minigames/host.js).
+    const minigames = window.ClubDojoMinigames.createHost({ root: win, conn, h, toast: (m, bad) => toast(m, bad), getMe: () => state.me });
 
     function toast(msg, bad) {
       const t = h('div', { class: `toast${bad ? ' bad' : ''}` }, msg);
@@ -162,8 +171,15 @@
       if (!state.room || !state.me) return;
       closeEmotes();
       let target = t;
-      const portal = P.portalAt(state.room, t.x, t.y);
-      if (!portal && !P.isWalkable(state.room, t.x, t.y)) {
+      state.pendingSpot = null;
+      const spot = P.spotAt(state.room, t.x, t.y);
+      if (spot) {
+        // Clicking a pavilion walks to its pad, then joins the lobby on arrival.
+        target = P.spotPad(spot);
+        state.pendingSpot = spot.id;
+      }
+      const portal = P.portalAt(state.room, target.x, target.y);
+      if (!spot && !portal && !P.isWalkable(state.room, t.x, t.y)) {
         // Clicking a building walks to its door; otherwise go to the nearest open tile.
         target = nearestDoor(t) || nearestWalkable(t);
         if (!target) { world.showMarker(t, false); return; }
@@ -173,9 +189,10 @@
       const me = world.players.get(state.me.id);
       if (me && me.x === target.x && me.y === target.y && !me.path.length) {
         if (state.pendingPortal) { state.pendingPortal = false; conn.request('portal').catch((e) => toast(e.message, true)); }
+        if (state.pendingSpot) { const id = state.pendingSpot; state.pendingSpot = null; minigames.join(id); }
         return;
       }
-      conn.request('move', target).catch(() => { state.pendingPortal = false; world.showMarker(target, false); });
+      conn.request('move', target).catch((e) => { state.pendingPortal = false; state.pendingSpot = null; world.showMarker(target, false); if (e.code === 'busy') toast(e.message, true); });
     }
     function nearestDoor(t) {
       const building = (state.room.props || []).find((p) => (p.type === 'building') && t.x >= p.x && t.x < p.x + p.w && t.y >= p.y && t.y < p.y + p.h);
@@ -268,15 +285,40 @@
       if (!list.children.length) list.append(h('li', { class: 'muted' }, 'Nobody else is in this room yet.'));
       comingSoon('Friends', 'Ninjas nearby', 'Friend requests come in a later update. These ninjas are in the room with you:', list);
     }
-    function openMinigames() {
-      const games = [['Shuriken Arena', '2 to 8'], ['Snowfall Dodge', '1 to 8'], ['Rooftop Race', '1 to 6'], ['Dojo Memory', '1 to 4'], ['Ice Fishing', '1']];
-      comingSoon('Minigames', 'Lobby', 'Minigames open in a coming update. Here is what is being built:',
-        h('ul', { class: 'list' }, games.map(([g, n]) => h('li', {}, h('span', { style: { flex: 1 } }, g), h('span', { class: 'muted' }, `${n} ninjas`)))));
+    // Minigame list: every installed game, where to find it, lobby status, your best score,
+    // and the games that are still being built.
+    async function openMinigames() {
+      let data;
+      try { data = await conn.request('mg:list'); } catch (e) { toast(e.message, true); return; }
+      const stats = new Map((data.stats || []).map((r) => [r.game_id, r]));
+      const rows = data.games.map((g) => {
+        const spots = data.spots.filter((sp) => sp.game === g.id);
+        const st = stats.get(g.id);
+        const here = spots.filter((sp) => sp.roomId === state.room.id);
+        const where = spots.length ? [...new Set(spots.map((sp) => sp.roomName))].join(', ') : 'Not placed on the map yet';
+        const busy = spots.reduce((n, sp) => n + (sp.lobby ? sp.lobby.count : 0), 0);
+        const status = !g.available ? 'Coming soon' : !g.enabled ? 'Closed' : busy ? `${busy} playing or waiting` : 'Open';
+        return h('li', { class: `mg-row${g.available ? '' : ' planned'}` },
+          h('span', { class: 'mg-icon', style: { background: g.color } }, g.icon),
+          h('div', { class: 'grow' },
+            h('b', {}, g.name), ' ', h('span', { class: `pill${g.available && g.enabled ? ' open' : ''}` }, status),
+            h('div', { class: 'muted' }, g.description),
+            h('div', { class: 'muted' }, `${g.minPlayers === g.maxPlayers ? g.minPlayers : `${g.minPlayers}-${g.maxPlayers}`} ninja${g.maxPlayers === 1 ? '' : 's'} · ${g.available ? where : 'In development'}`
+              + (st ? ` · best ${st.best} pts, ${st.plays} play${st.plays === 1 ? '' : 's'}` : ''))),
+          g.available && g.enabled && here.length
+            ? h('button', { class: 'btn small', onclick: () => { closeModal(); walkTo({ x: here[0].x + 1, y: here[0].y }); } }, 'Go play')
+            : null);
+      });
+      openModal('Minigames', 'Minigame list',
+        h('p', { class: 'muted' }, 'Walk up to a pavilion in the village to join its lobby. Games award coins and XP.'),
+        h('ul', { class: 'list mg-list' }, rows),
+        h('div', { class: 'foot' }, h('span', { class: 'muted' }, 'More minigames are on the way.'), h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
     }
 
     // ---------- keyboard ----------
     document.addEventListener('keydown', (e) => {
       if (state.phase !== 'game') return;
+      if (minigames.isOpen()) return; // the minigame owns the keyboard
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
       if (e.key === 'Escape') {
         if (modalOpen) { closeModal(); e.preventDefault(); return; }
@@ -316,6 +358,7 @@
       showBanner(m.text, m.from);
       chatLine(`📣 ${m.from}: ${m.text}`, 'ann');
     });
+    conn.on('mg:spots', (m) => { if (state.room && m.roomId === state.room.id) world.spotStatus = m.spots; });
     conn.on('presence', (m) => { state.online = m.online; renderRoomTag(); });
     conn.on('you', (m) => {
       const before = state.me;
@@ -489,7 +532,7 @@
     renderConnect(null);
 
     return {
-      conn, world, state, P, h, toast, openModal, closeModal, chatLine,
+      conn, world, state, P, h, toast, openModal, closeModal, chatLine, minigames,
       on: (type, fn) => bus.addEventListener(type, (e) => fn(e.detail)),
       root: win,
     };

@@ -51,6 +51,11 @@ CREATE TABLE IF NOT EXISTS login_log (
   ip TEXT, client TEXT, created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS minigame_scores (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, account_id INTEGER NOT NULL, game_id TEXT NOT NULL,
+  score INTEGER NOT NULL, place INTEGER, players INTEGER, played_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS minigame_scores_game ON minigame_scores (game_id, score DESC);
 `;
 
 function open(dataDir) {
@@ -63,20 +68,58 @@ function open(dataDir) {
   const now = () => Date.now();
   const q = (sql) => db.prepare(sql);
 
-  // Seed rooms on first run.
+  // Columns added after v1.0.0.
+  const ninjaCols = q('PRAGMA table_info(ninjas)').all().map((c) => c.name);
+  if (!ninjaCols.includes('accessories')) db.exec("ALTER TABLE ninjas ADD COLUMN accessories TEXT NOT NULL DEFAULT '{}'");
+
+  // Seed rooms on first run, and upgrade starter rooms when the seed changes
+  // (for example the v1.1 forest hub). The old layout stays in room_versions.
   const roomCount = q('SELECT COUNT(*) AS n FROM rooms').get().n;
-  if (roomCount === 0) {
+  const settingRow = q("SELECT value FROM settings WHERE key = 'seed_version'").get();
+  const storedSeed = settingRow ? Number(settingRow.value) : roomCount === 0 ? 0 : 1;
+  const seedChanges = [];
+  if (storedSeed < seedRooms.SEED_VERSION) {
     const ins = q('INSERT INTO rooms (id, name, data) VALUES (?, ?, ?)');
-    const ver = q('INSERT INTO room_versions (room_id, version, data, created_at) VALUES (?, 1, ?, ?)');
+    const ver = q('INSERT INTO room_versions (room_id, version, data, created_at) VALUES (?, ?, ?, ?)');
+    const cur = q('SELECT published_version FROM rooms WHERE id = ?');
+    const upd = q('UPDATE rooms SET data = ?, name = ?, published_version = ?, draft = NULL WHERE id = ?');
     for (const r of seedRooms()) {
       const json = JSON.stringify(r);
-      ins.run(r.id, r.name, json);
-      ver.run(r.id, json, now());
+      const existing = cur.get(r.id);
+      if (!existing) { ins.run(r.id, r.name, json); ver.run(r.id, 1, json, now()); if (roomCount) seedChanges.push(`added ${r.name}`); }
+      else if ((r.seedVersion || 1) > storedSeed) {
+        const v = existing.published_version + 1;
+        upd.run(json, r.name, v, r.id);
+        ver.run(r.id, v, json, now());
+        seedChanges.push(`updated ${r.name} to v${v}`);
+      }
     }
+    q("INSERT INTO settings (key, value) VALUES ('seed_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(seedRooms.SEED_VERSION));
   }
 
   const api = {
     file,
+    seedChanges,
+    getJsonSetting(key) {
+      const v = api.getSetting(key);
+      try { return v ? JSON.parse(v) : null; } catch { return null; }
+    },
+    setJsonSetting(key, value) { api.setSetting(key, JSON.stringify(value)); },
+
+    // Minigames
+    recordMinigameScore(accountId, gameId, score, place, players) {
+      q('INSERT INTO minigame_scores (account_id, game_id, score, place, players, played_at) VALUES (?, ?, ?, ?, ?, ?)').run(accountId, gameId, score, place, players, now());
+    },
+    addRewards(accountId, coins, xp) {
+      q('UPDATE ninjas SET coins = coins + ?, xp = xp + ? WHERE account_id = ?').run(coins, xp, accountId);
+    },
+    topMinigameScores(gameId, limit) {
+      return q(`SELECT n.name, MAX(s.score) AS score, COUNT(*) AS plays FROM minigame_scores s JOIN ninjas n ON n.account_id = s.account_id
+                WHERE s.game_id = ? GROUP BY s.account_id ORDER BY score DESC LIMIT ?`).all(gameId, limit || 10);
+    },
+    minigameStats(accountId) {
+      return q('SELECT game_id, COUNT(*) AS plays, MAX(score) AS best, SUM(place = 1) AS wins FROM minigame_scores WHERE account_id = ? GROUP BY game_id').all(accountId);
+    },
     getSetting(key) {
       const row = q('SELECT value FROM settings WHERE key = ?').get(key);
       return row ? row.value : null;
