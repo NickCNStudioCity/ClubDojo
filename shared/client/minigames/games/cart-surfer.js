@@ -65,7 +65,7 @@ ClubDojoMinigames.register({
       for (const id of Object.keys(snapshot)) {
         const [lane, y, finished, stunned, coins] = snapshot[id];
         players[id] = { lane, y, finished: !!finished, stunned: !!stunned, coins };
-        if (id === ctx.youId) myCoins = coins;
+        if (Number(id) === ctx.youId) myCoins = coins; // object keys are strings
       }
       for (const id of Object.keys(players)) if (!snapshot[id]) delete players[id];
     }
@@ -168,7 +168,7 @@ ClubDojoMinigames.register({
       const x = p.x;
       let y = toScreenY(p.y, camY);
       if (p.stunned) y += Math.sin(t / 30) * 3;
-      const isMe = id === ctx.youId;
+      const isMe = Number(id) === ctx.youId;
       g.save();
       g.globalAlpha = isMe ? 1 : 0.75;
 
@@ -240,7 +240,7 @@ ClubDojoMinigames.register({
       drawFinishLine(camY);
       if (track) for (const item of track.items) drawItem(item, camY);
       for (const id of Object.keys(shown)) {
-        if (id === ctx.youId) continue;
+        if (Number(id) === ctx.youId) continue;
         drawCart(id, { ...shown[id], stunned: players[id] && players[id].stunned }, camY, t);
       }
       if (me) drawCart(ctx.youId, { ...me, stunned: players[ctx.youId] && players[ctx.youId].stunned }, camY, t);

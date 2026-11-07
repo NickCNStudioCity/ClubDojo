@@ -258,7 +258,7 @@ const expectError = async (p, code) => {
     await ren.waitFor((m) => m.t === 'mg:lobby' && m.lobby.players.length === 2, 2000, 'lobby of 2');
     const spots = await kai.waitFor((m) => m.t === 'mg:spots', 50).catch(() => null); // kai is elsewhere; must not get it
     assert(!spots, 'spot updates only go to the room');
-    await expectError(ren.req('move', { x: 12, y: 18 }).then(() => ren.req('mg:ready', { ready: true })), 'bad'); // moving left the lobby
+    await expectError(ren.req('move', { x: 11, y: 17 }).then(() => ren.req('mg:ready', { ready: true })), 'bad'); // moving left the lobby
     await ren.req('move', { x: 9, y: 17 });
     await ren.req('mg:join', { spotId: 'mg1' });
   });

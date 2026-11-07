@@ -31,17 +31,25 @@ function plaza() {
   rect(g, 28, 15, 8, 5, '~');
   rect(g, 27, 14, 10, 1, 'f');
   rect(g, 27, 20, 10, 1, 'f');
-  for (const [x, y, w, h] of [[23, 18, 3, 2], [13, 13, 2, 2], [4, 18, 3, 1], [33, 12, 3, 1]]) rect(g, x, y, w, h, 'f');
+  for (const [x, y, w, h] of [[23, 18, 3, 2], [13, 13, 2, 2], [10, 13, 2, 1], [33, 12, 3, 1]]) rect(g, x, y, w, h, 'f');
+  // Minigame clearing paths, and a path from the square to the fishing dock.
+  rect(g, 4, 14, 5, 1, ':');
+  rect(g, 4, 17, 10, 1, ':');
+  rect(g, 8, 18, 1, 2, ':');
+  rect(g, 4, 20, 10, 1, ':');
+  rect(g, 21, 21, 11, 1, ':');
+  // Fishing dock: planks out over the pond (the fishing spot sits on the end).
+  rect(g, 30, 16, 3, 5, ',');
   // Trees: a dense edge on both sides plus a few in the open.
   const trees = [
-    [0, 4], [1, 9], [0, 13], [1, 16], [0, 19], [1, 22], [3, 21], [6, 22], [12, 22], [14, 20],
+    [0, 4], [1, 9], [0, 13], [1, 16], [0, 19], [1, 22], [3, 21], [6, 22], [12, 22], [17, 19],
     [39, 4], [38, 9], [39, 12], [38, 15], [39, 18], [38, 22], [36, 22], [31, 22], [26, 22],
-    [13, 17], [24, 12], [11, 4], [27, 4], [4, 14], [15, 11 + 6],
+    [16, 21], [24, 12], [11, 4], [27, 4], [15, 17],
   ];
   for (const [x, y] of trees) g[y][x] = '#';
   return {
     id: 'plaza',
-    seedVersion: 2,
+    seedVersion: 3,
     name: 'Forest Village',
     width: W,
     height: H,
@@ -55,6 +63,9 @@ function plaza() {
     minigames: [
       { id: 'mg1', game: 'dojo-memory', x: 8, y: 15 },
       { id: 'mg2', game: 'sled-race', x: 3, y: 12 },
+      { id: 'mg3', game: 'go-kart-race', x: 3, y: 18 },
+      { id: 'mg4', game: 'cart-surfer', x: 12, y: 18 },
+      { id: 'mg5', game: 'fishing', x: 30, y: 16 },
     ],
     props: [
       { type: 'forest', x: 0, y: 0, w: W, h: 3 },
@@ -129,5 +140,5 @@ function ramen() {
 function seedRooms() {
   return [plaza(), dojo(), ramen()];
 }
-seedRooms.SEED_VERSION = 2;
+seedRooms.SEED_VERSION = 3;
 module.exports = seedRooms;
