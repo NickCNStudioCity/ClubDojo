@@ -9,6 +9,10 @@ const INSTALLED = [
   require('./games/sled-race'),
   require('./games/go-kart-race'),
   require('./games/cart-surfer'),
+  require('./games/tennis'),
+  require('./games/basketball'),
+  require('./games/soccer'),
+  require('./games/football'),
 ];
 
 // Shown in the in-game minigame list as "coming soon" until a module is installed.
