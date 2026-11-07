@@ -54,6 +54,7 @@ function plaza() {
     // Minigame spots (pavilions). Admins add, move or remove these in the Map Editor.
     minigames: [
       { id: 'mg1', game: 'dojo-memory', x: 8, y: 15 },
+      { id: 'mg2', game: 'sled-race', x: 3, y: 12 },
     ],
     props: [
       { type: 'forest', x: 0, y: 0, w: W, h: 3 },

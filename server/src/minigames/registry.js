@@ -5,6 +5,7 @@
 // Full guide: docs/minigames/README.md
 const INSTALLED = [
   require('./games/dojo-memory'),
+  require('./games/sled-race'),
   require('./games/go-kart-race'),
 ];
 
