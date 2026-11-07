@@ -13,6 +13,7 @@
     "player": "npm start -w player-client",
     "admin": "npm start -w admin-client",
     "smoke": "node scripts/smoke-test.js",
+    "check:minigames": "node scripts/check-minigames.js",
     "release": "node scripts/build-release.js"
   },
   "devDependencies": {

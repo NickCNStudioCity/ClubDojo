@@ -5,7 +5,7 @@
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.ClubDojoProtocol = api;
 })(typeof self !== 'undefined' ? self : this, function () {
-  const PROTOCOL_VERSION = 1;
+  const PROTOCOL_VERSION = 2;
   const DEFAULT_PORT = 7777;
   const DISCOVERY_PORT = 7778;
 
@@ -17,6 +17,9 @@
     '=': { name: 'Rooftop', walkable: true },
     '*': { name: 'Ice', walkable: true },
     ',': { name: 'Wood floor', walkable: true },
+    'g': { name: 'Grass', walkable: true },
+    ':': { name: 'Dirt path', walkable: true },
+    'f': { name: 'Flowers', walkable: true },
   };
 
   const ROLES = ['ninja', 'sensei', 'grandmaster'];
@@ -44,6 +47,42 @@
     announceMax: 200,
   };
 
+  // ---------- Minigame spots ----------
+  // A spot is a small pavilion placed on a room map ({ id, game, x, y }). Its footprint
+  // blocks walking; ninjas join the game by standing on the pad tile in front of it.
+  const MINIGAME_SPOT = { w: 3, h: 2 };
+  const MINIGAME_PHASES = ['lobby', 'countdown', 'playing', 'results'];
+
+  function spotAt(room, x, y) {
+    return (room.minigames || []).find((s) => x >= s.x && x < s.x + MINIGAME_SPOT.w && y >= s.y && y < s.y + MINIGAME_SPOT.h) || null;
+  }
+  function spotPad(spot) {
+    return { x: spot.x + Math.floor(MINIGAME_SPOT.w / 2), y: spot.y + MINIGAME_SPOT.h };
+  }
+  function spotKey(roomId, spot) {
+    return `${roomId}:${spot.id}`;
+  }
+
+  // ---------- Character loadout ----------
+  // Everything a minigame needs to draw a ninja, snapshotted when they join a lobby.
+  // Accessory slots are filled from inventory in a later phase (see docs/minigames/character-loading.md).
+  const ACCESSORY_SLOTS = ['back', 'body', 'head', 'face', 'hand', 'feet'];
+  function loadoutFromNinja(n) {
+    let accessories = {};
+    if (n.accessories) { try { accessories = typeof n.accessories === 'string' ? JSON.parse(n.accessories) : n.accessories; } catch {} }
+    const clean = {};
+    for (const slot of ACCESSORY_SLOTS) if (typeof accessories[slot] === 'string') clean[slot] = accessories[slot];
+    return {
+      v: 1,
+      id: n.account_id ?? n.id,
+      name: n.name,
+      color: n.color,
+      headband: n.headband,
+      belt: n.belt,
+      accessories: clean,
+    };
+  }
+
   function beltById(id) {
     return BELTS.find((b) => b.id === id) || BELTS[0];
   }
@@ -60,7 +99,7 @@
 
   function isWalkable(room, x, y) {
     const t = TILES[tileAt(room, x, y)];
-    return !!(t && t.walkable);
+    return !!(t && t.walkable) && !spotAt(room, x, y);
   }
 
   function portalAt(room, x, y) {
@@ -103,6 +142,7 @@
 
   return {
     PROTOCOL_VERSION, DEFAULT_PORT, DISCOVERY_PORT, TILES, ROLES, BELTS, NINJA_COLORS, EMOTES, LIMITS,
-    beltById, nextBelt, tileAt, isWalkable, portalAt, findPath,
+    MINIGAME_SPOT, MINIGAME_PHASES, ACCESSORY_SLOTS,
+    beltById, nextBelt, tileAt, isWalkable, portalAt, findPath, spotAt, spotPad, spotKey, loadoutFromNinja,
   };
 });

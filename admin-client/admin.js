@@ -12,10 +12,11 @@
   const req = (t, body) => conn.request(t, body).then((d) => { if (d.message) toast(d.message); return d; }).catch((e) => { toast(e.message, true); throw e; });
 
   let roomsCache = [];
+  let gamesCache = []; // installed + planned minigames (admin:minigames)
   let worldSnap = null;
   let tab = 'world';
 
-  const tabs = [['world', 'Live World'], ['players', 'Players'], ['map', 'Map Editor'], ['logs', 'Logs'], ['server', 'Server']];
+  const tabs = [['world', 'Live World'], ['players', 'Players'], ['map', 'Map Editor'], ['minigames', 'Minigames'], ['logs', 'Logs'], ['server', 'Server']];
   const tabBar = h('div', { class: 'dock-tabs', role: 'tablist' });
   const body = h('div', { class: 'dock-body' });
   dock.append(h('div', { class: 'dock-head' }, h('h1', {}, 'GRANDMASTER ', h('span', {}, 'TOOLS')), tabBar), body);
@@ -27,13 +28,14 @@
     if (tab === 'map' && id !== 'map') editor.leave();
     tab = id;
     renderTabs();
-    ({ world: renderWorld, players: renderPlayers, map: renderMap, logs: renderLogs, server: renderServer })[id]();
+    ({ world: renderWorld, players: renderPlayers, map: renderMap, minigames: renderMinigames, logs: renderLogs, server: renderServer })[id]();
   }
 
   game.on('authed', async () => {
     dock.hidden = false;
     try { roomsCache = (await conn.request('admin:rooms')).rooms; } catch {}
     try { worldSnap = await conn.request('admin:world'); } catch {}
+    try { gamesCache = (await conn.request('admin:minigames')).games; } catch {}
     show(tab);
   });
   game.on('disconnected', () => { dock.hidden = true; worldSnap = null; });
@@ -140,20 +142,25 @@
   }
 
   // ---------- Map Editor ----------
-  const BRUSH_COLORS = { '.': '#f4fafd', '#': '#9fb6c3', '~': '#6fb7dc', '=': '#d9c08a', '*': '#cdeaf7', ',': '#c99a6b' };
+  const BRUSH_COLORS = { '.': '#f4fafd', '#': '#9fb6c3', '~': '#6fb7dc', '=': '#d9c08a', '*': '#cdeaf7', ',': '#c99a6b', g: '#7dbb62', ':': '#d6b685', f: '#ff7eb6' };
+  const installedGames = () => gamesCache.filter((g) => g.available);
+  const gameInfo = (id) => gamesCache.find((g) => g.id === id) || { name: id, color: '#7a3b2e', icon: '🥋' };
   const editor = {
-    roomId: null, tiles: null, spawn: null, brush: '#', undo: [], redo: [], dirty: false, canvas: null, status: null, painting: false, stroke: null,
+    roomId: null, tiles: null, spawn: null, spots: [], spotGame: null, brush: '#', undo: [], redo: [], dirty: false, canvas: null, status: null, painting: false, stroke: null,
     room() { return roomsCache.find((r) => r.id === this.roomId); },
     load(room, fromDraft) {
       const src = fromDraft && room.draft ? room.draft : room;
       this.roomId = room.id;
       this.tiles = src.tiles.map((r) => r.split(''));
       this.spawn = { ...src.spawn };
+      this.spots = (src.minigames || []).map((sp) => ({ id: sp.id, game: sp.game, x: sp.x, y: sp.y }));
       this.undo = []; this.redo = []; this.dirty = false;
     },
-    data() { return { roomId: this.roomId, tiles: this.tiles.map((r) => r.join('')), spawn: this.spawn }; },
-    snapshot() { return { tiles: this.tiles.map((r) => r.slice()), spawn: { ...this.spawn } }; },
-    restore(s) { this.tiles = s.tiles.map((r) => r.slice()); this.spawn = { ...s.spawn }; },
+    data() { return { roomId: this.roomId, tiles: this.tiles.map((r) => r.join('')), spawn: this.spawn, minigames: this.spots }; },
+    snapshot() { return { tiles: this.tiles.map((r) => r.slice()), spawn: { ...this.spawn }, spots: this.spots.map((sp) => ({ ...sp })) }; },
+    restore(s) { this.tiles = s.tiles.map((r) => r.slice()); this.spawn = { ...s.spawn }; this.spots = s.spots.map((sp) => ({ ...sp })); },
+    // Spots with display info so the preview draws pavilions in each game's color.
+    viewSpots() { return this.spots.map((sp) => { const g = gameInfo(sp.game); return { ...sp, name: g.name, color: g.color, icon: g.icon }; }); },
     leave() { this.painting = false; },
   };
 
@@ -173,7 +180,15 @@
     const brushes = h('div', { class: 'brushes', role: 'toolbar', 'aria-label': 'Brushes' },
       ...Object.entries(P.TILES).map(([ch, t]) => h('button', { 'aria-pressed': String(editor.brush === ch), onclick: () => { editor.brush = ch; renderMap(); } },
         h('i', { style: { background: BRUSH_COLORS[ch] } }), t.name)),
-      h('button', { 'aria-pressed': String(editor.brush === 'spawn'), onclick: () => { editor.brush = 'spawn'; renderMap(); } }, h('i', { style: { background: '#2f6fd1', borderRadius: '50%' } }), 'Spawn point'));
+      h('button', { 'aria-pressed': String(editor.brush === 'spawn'), onclick: () => { editor.brush = 'spawn'; renderMap(); } }, h('i', { style: { background: '#2f6fd1', borderRadius: '50%' } }), 'Spawn point'),
+      h('button', { 'aria-pressed': String(editor.brush === 'spot'), onclick: () => { editor.brush = 'spot'; renderMap(); } }, h('i', { style: { background: '#8e44ad' } }), 'Minigame pavilion'),
+      h('button', { 'aria-pressed': String(editor.brush === 'unspot'), onclick: () => { editor.brush = 'unspot'; renderMap(); } }, h('i', { style: { background: '#b03a2e' } }), 'Remove pavilion'));
+    if (!editor.spotGame && installedGames().length) editor.spotGame = installedGames()[0].id;
+    const spotPicker = editor.brush === 'spot' ? h('div', { class: 'row', style: { marginTop: '8px' } },
+      h('span', { class: 'tag' }, 'Game'),
+      h('select', { class: 'grow', onchange: (e) => { editor.spotGame = e.target.value; } },
+        installedGames().map((g) => h('option', { value: g.id, selected: g.id === editor.spotGame }, `${g.icon} ${g.name}`))),
+      h('span', { class: 'tag' }, 'Click where the roof should go')) : null;
     const canvas = h('canvas', { class: 'editor-canvas', 'aria-label': `Map of ${room.name}. Drag to paint.` });
     editor.canvas = canvas;
     editor.status = h('div', { class: 'status-line' });
@@ -189,7 +204,7 @@
     body.replaceChildren(
       h('h3', {}, 'Room'),
       h('div', { class: 'row', style: { marginBottom: '10px' } }, sel, h('span', { class: 'tag' }, `v${room.version} published${room.draft ? ' · draft saved' : ''}`)),
-      h('h3', {}, 'Brush'), brushes,
+      h('h3', {}, 'Brush'), brushes, spotPicker,
       h('div', { style: { marginTop: '10px' } }, canvas), editor.status,
       h('div', { class: 'row', style: { marginTop: '10px' } }, undoBtn, redoBtn,
         h('button', { class: 'btn small alt', onclick: () => { if (confirm('Throw away edits and reload the published room?')) { editor.load(room, false); renderMap(); } } }, 'Revert'),
@@ -197,7 +212,7 @@
         h('button', { class: 'btn small alt', onclick: () => req('admin:saveDraft', editor.data()).then(refreshRooms, () => {}) }, 'Save draft'),
         h('button', { class: 'btn small gold', onclick: () => { if (confirm(`Publish ${room.name} to every ninja now?`)) req('admin:publishRoom', editor.data()).then(() => { editor.dirty = false; refreshRooms(); }, () => {}); } }, 'Publish')),
       h('p', { class: 'tag', style: { marginTop: '12px', lineHeight: '1.5' } },
-        'Paint walkable and blocked tiles. Doors (gold) and the spawn point (blue) must stay walkable. Buildings and other props are drawn on top of blocked tiles; placing props, NPCs and portals arrives in the next editor update.'));
+        'Paint walkable and blocked tiles. Doors (gold), the spawn point (blue) and the pad in front of each minigame pavilion must stay walkable. Pavilions are 3 x 2 tiles and block walking. Buildings and other props are drawn on top of blocked tiles; placing props, NPCs and portals arrives in a later editor update.'));
 
     const pos = (e) => {
       const r = canvas.getBoundingClientRect();
@@ -207,6 +222,19 @@
     const paint = (t) => {
       if (t.x < 0 || t.y < 0 || t.x >= room.width || t.y >= room.height) return;
       if (editor.brush === 'spawn') { editor.spawn = t; }
+      else if (editor.brush === 'spot' || editor.brush === 'unspot') {
+        if (editor.spotPlaced) return; // one pavilion change per click
+        editor.spotPlaced = true;
+        const { w, h: sh } = P.MINIGAME_SPOT;
+        const hit = editor.spots.findIndex((sp) => t.x >= sp.x && t.x < sp.x + w && t.y >= sp.y && t.y < sp.y + sh);
+        if (editor.brush === 'unspot') { if (hit < 0) return; editor.spots.splice(hit, 1); }
+        else {
+          if (!editor.spotGame) { toast('No minigames are installed.', true); return; }
+          const x = Math.max(0, Math.min(room.width - w, t.x - 1)), y = Math.max(0, Math.min(room.height - sh - 1, t.y));
+          if (hit >= 0) editor.spots[hit] = { ...editor.spots[hit], game: editor.spotGame }; // re-assign the game
+          else editor.spots.push({ game: editor.spotGame, x, y });
+        }
+      }
       else if (editor.tiles[t.y][t.x] !== editor.brush) editor.tiles[t.y][t.x] = editor.brush;
       else return;
       editor.dirty = true;
@@ -216,12 +244,12 @@
       canvas.setPointerCapture(e.pointerId);
       editor.undo.push(editor.snapshot()); editor.redo = [];
       if (editor.undo.length > 100) editor.undo.shift();
-      editor.painting = true; paint(pos(e));
+      editor.painting = true; editor.spotPlaced = false; paint(pos(e));
     });
     canvas.addEventListener('pointermove', (e) => {
       const t = pos(e);
       editor.status.textContent = t.x >= 0 && t.x < room.width && t.y >= 0 && t.y < room.height
-        ? `Tile ${t.x}, ${t.y} · ${P.TILES[editor.tiles[t.y][t.x]].name}${P.portalAt(room, t.x, t.y) ? ` · door to ${P.portalAt(room, t.x, t.y).label}` : ''}` : '';
+        ? `Tile ${t.x}, ${t.y} · ${P.TILES[editor.tiles[t.y][t.x]].name}${P.portalAt(room, t.x, t.y) ? ` · door to ${P.portalAt(room, t.x, t.y).label}` : ''}${P.spotAt({ minigames: editor.spots }, t.x, t.y) ? ` · ${gameInfo(P.spotAt({ minigames: editor.spots }, t.x, t.y).game).name} pavilion` : ''}` : '';
       if (editor.painting) paint(t);
     });
     canvas.addEventListener('pointerup', () => { editor.painting = false; });
@@ -240,7 +268,7 @@
     canvas.height = Math.round(T * room.height * dpr);
     const c = canvas.getContext('2d');
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const draft = { ...room, tiles: editor.tiles.map((r) => r.join('')) };
+    const draft = { ...room, tiles: editor.tiles.map((r) => r.join('')), minigames: editor.viewSpots() };
     World.drawStatic(c, draft, T);
     // Show the raw tile type over props so blocked areas under buildings are visible.
     c.globalAlpha = 0.28;
@@ -270,6 +298,42 @@
       editor.restore(snap); editor.dirty = dirty; editor.undo = undo; editor.redo = redo;
       drawEditor();
     }
+  }
+
+  // ---------- Minigames ----------
+  async function renderMinigames() {
+    try { gamesCache = (await conn.request('admin:minigames')).games; } catch (e) { toast(e.message, true); return; }
+    const spotsByGame = new Map();
+    for (const r of roomsCache) for (const sp of r.minigames || []) {
+      if (!spotsByGame.has(sp.game)) spotsByGame.set(sp.game, []);
+      spotsByGame.get(sp.game).push(r.name);
+    }
+    const installed = gamesCache.filter((g) => g.available);
+    const planned = gamesCache.filter((g) => !g.available);
+    body.replaceChildren(
+      h('h3', {}, 'Installed'),
+      ...installed.map((g) => {
+        const mult = h('input', { type: 'number', min: 0, max: 5, step: 0.25, value: g.settings.multiplier, style: { width: '70px' }, 'aria-label': 'Reward multiplier' });
+        const where = spotsByGame.get(g.id) || [];
+        return h('div', { class: 'box' },
+          h('div', { class: 'row' },
+            h('span', { style: { fontSize: '20px' } }, g.icon),
+            h('b', { class: 'grow' }, g.name),
+            h('span', { class: `pill${g.settings.enabled ? ' gm' : ' bad'}` }, g.settings.enabled ? 'Open' : 'Closed')),
+          h('div', { class: 'tag', style: { margin: '4px 0 8px' } }, `${g.minPlayers}-${g.maxPlayers} ninjas · ${where.length ? `${where.length} pavilion${where.length > 1 ? 's' : ''}: ${[...new Set(where)].join(', ')}` : 'No pavilions placed (add one in Map Editor)'}`),
+          h('div', { class: 'row' },
+            h('span', { class: 'grow' }, 'Reward multiplier'), mult,
+            h('button', { class: 'btn small alt', onclick: () => req('admin:setMinigame', { game: g.id, multiplier: Number(mult.value) }).then(renderMinigames, () => {}) }, 'Save'),
+            h('button', { class: `btn small ${g.settings.enabled ? 'warn' : 'gold'}`, onclick: () => req('admin:setMinigame', { game: g.id, enabled: !g.settings.enabled }).then(renderMinigames, () => {}) }, g.settings.enabled ? 'Close game' : 'Open game')),
+          g.lobbies.length ? h('div', { style: { marginTop: '8px' } }, g.lobbies.map((l) => h('div', { class: 'who' },
+            h('span', { class: 'name' }, `${l.phase} · ${l.players.map((p) => p.name).join(', ')}`)))) : null,
+          g.top.length ? h('div', { style: { marginTop: '8px' } }, h('div', { class: 'tag' }, 'Top scores'),
+            h('ol', { style: { margin: '4px 0 0', paddingLeft: '20px', fontSize: '13px' } }, g.top.map((t) => h('li', {}, `${t.name}: ${t.score} pts (${t.plays} plays)`)))) : null);
+      }),
+      h('h3', {}, 'In development'),
+      h('div', { class: 'box' }, planned.length ? planned.map((g) => h('div', { class: 'who' }, h('span', {}, g.icon), h('span', { class: 'name' }, g.name), h('span', { class: 'tag' }, `${g.minPlayers}-${g.maxPlayers} ninjas`)))
+        : h('div', { class: 'empty' }, 'Nothing planned.')),
+      h('p', { class: 'tag', style: { lineHeight: '1.5' } }, 'New minigames are added as code modules (see docs/minigames/README.md), then placed on the map with the Map Editor\'s Minigame pavilion brush.'));
   }
 
   // ---------- Logs ----------

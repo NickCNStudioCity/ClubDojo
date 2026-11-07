@@ -67,7 +67,7 @@ Ports and firewall: the host must allow inbound TCP on the chosen port. The setu
 
 ## 5. The World
 
-- **Village rooms** are the core unit: the Snow Plaza (hub), the Ice Hill, the Ramen House, the Main Dojo, the Training Yard, the Shuriken Arena, and so on.
+- **Village rooms** are the core unit: the Forest Village (hub; replaced the Snow Plaza draft, with more open areas to come), the Ice Hill, the Ramen House, the Main Dojo, the Training Yard, the Shuriken Arena, and so on.
 - Each room is a tile grid (for example 40 x 24 tiles) with:
   - Walkable and blocked tiles
   - Portals to other rooms
@@ -77,6 +77,8 @@ Ports and firewall: the host must allow inbound TCP on the chosen port. The setu
 - Up to 30 ninjas per room. Chat is per room, plus a global announcement channel.
 
 ## 6. Ninja Progression: Belts, Quests, and Objectives
+
+> **Status note (2026-11-07):** belt progression and rank-ups are deferred while the minigame framework is built. See [docs/notes/belt-progression.md](docs/notes/belt-progression.md).
 
 ### Belt ranks
 

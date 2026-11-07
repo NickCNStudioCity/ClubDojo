@@ -67,6 +67,17 @@ const expectError = async (p, code) => {
 };
 
 (async () => {
+  {
+    const old = require('../server/src/db').open(dataDir);
+    const { DatabaseSync } = require('node:sqlite');
+    old.close();
+    const raw = new DatabaseSync(path.join(dataDir, 'clubdojo.sqlite'));
+    const plaza = JSON.parse(raw.prepare("SELECT data FROM rooms WHERE id = 'plaza'").get().data);
+    plaza.name = 'Snow Plaza'; delete plaza.minigames; delete plaza.seedVersion;
+    raw.prepare("UPDATE rooms SET data = ?, name = 'Snow Plaza' WHERE id = 'plaza'").run(JSON.stringify(plaza));
+    raw.prepare("DELETE FROM settings WHERE key = 'seed_version'").run();
+    raw.close();
+  }
   const server = start({ port: PORT, dataDir, joinCode: JOIN, adminPassword: ADMIN_PW, discovery: false, quiet: true });
   await server.ready;
   console.log(`ClubDojo smoke test on port ${PORT}`);
@@ -209,12 +220,106 @@ const expectError = async (p, code) => {
     assert(/Backup saved/.test(b.message), 'backup');
   });
 
+  // ---------------- minigames ----------------
+  const ren = new Client('ren', 'player');
+  const aya = new Client('aya', 'player');
+  await Promise.all([ren.open(), aya.open()]);
+
+  await check('v1 worlds upgrade to the Forest Village hub with a minigame pavilion', async () => {
+    await ren.hello();
+    await ren.req('register', { username: 'ren', password: 'secret3', name: 'Ren', color: P.NINJA_COLORS[3] });
+    const e = await ren.waitFor((m) => m.t === 'room:enter', 2000, 'room:enter');
+    assert(e.room.name === 'Forest Village', `hub is ${e.room.name}`);
+    assert(e.room.version === 2, `hub version ${e.room.version}`);
+    const spot = e.room.minigames.find((sp) => sp.game === 'dojo-memory');
+    assert(spot && spot.name === 'Dojo Memory' && spot.id === 'mg1', 'pavilion in room payload');
+    assert(!P.isWalkable(e.room, spot.x, spot.y) && P.isWalkable(e.room, P.spotPad(spot).x, P.spotPad(spot).y), 'pavilion blocks, pad open');
+    await aya.hello();
+    await aya.req('register', { username: 'aya', password: 'secret4', name: 'Aya', color: P.NINJA_COLORS[4] });
+    await aya.waitFor((m) => m.t === 'room:enter', 2000, 'room:enter');
+  });
+
+  await check('minigame list shows installed and planned games with locations', async () => {
+    const list = await ren.req('mg:list');
+    const dm = list.games.find((g) => g.id === 'dojo-memory');
+    assert(dm && dm.available && dm.enabled, 'dojo memory installed');
+    assert(list.games.some((g) => g.id === 'shuriken-arena' && !g.available), 'planned games listed');
+    assert(list.spots.some((sp) => sp.game === 'dojo-memory' && sp.roomName === 'Forest Village'), 'spot location');
+  });
+
+  await check('joining needs you at the pavilion; two ninjas share a lobby', async () => {
+    await expectError(ren.req('mg:join', { spotId: 'mg1' }), 'far');
+    await ren.req('move', { x: 9, y: 17 });
+    const r = await ren.req('mg:join', { spotId: 'mg1' });
+    assert(r.lobby.players.length === 1 && r.lobby.phase === 'lobby', 'lobby open');
+    assert(r.lobby.players[0].loadout.color === P.NINJA_COLORS[3] && r.lobby.players[0].loadout.belt === 'white', 'loadout carries look');
+    await aya.req('move', { x: 8, y: 17 });
+    await aya.req('mg:join', { spotId: 'mg1' });
+    await ren.waitFor((m) => m.t === 'mg:lobby' && m.lobby.players.length === 2, 2000, 'lobby of 2');
+    const spots = await kai.waitFor((m) => m.t === 'mg:spots', 50).catch(() => null); // kai is elsewhere; must not get it
+    assert(!spots, 'spot updates only go to the room');
+    await expectError(ren.req('move', { x: 12, y: 18 }).then(() => ren.req('mg:ready', { ready: true })), 'bad'); // moving left the lobby
+    await ren.req('move', { x: 9, y: 17 });
+    await ren.req('mg:join', { spotId: 'mg1' });
+  });
+
+  await check('a full round runs on the server: countdown, play, results, rewards', async () => {
+    await ren.req('mg:ready', { ready: true });
+    await aya.req('mg:ready', { ready: true });
+    await ren.waitFor((m) => m.t === 'mg:lobby' && m.lobby.phase === 'countdown', 2000, 'countdown');
+    await ren.waitFor((m) => m.t === 'mg:lobby' && m.lobby.phase === 'playing', 5000, 'playing');
+    await ren.waitFor((m) => m.t === 'mg:msg' && m.data.type === 'setup', 3000, 'setup');
+    // Round 1: Ren repeats the sequence, Aya taps a wrong scroll.
+    const show1 = await ren.waitFor((m) => m.t === 'mg:msg' && m.data.type === 'show', 3000, 'show 1');
+    await ren.waitFor((m) => m.t === 'mg:msg' && m.data.type === 'input', 6000, 'input 1');
+    for (const sc of show1.data.sequence) await ren.req('mg:input', { data: { type: 'tap', scroll: sc } });
+    await aya.req('mg:input', { data: { type: 'tap', scroll: (show1.data.sequence[0] + 1) % 6 } });
+    await ren.waitFor((m) => m.t === 'mg:msg' && m.data.type === 'out' && m.data.reason === 'wrong', 2000, 'aya out');
+    // Round 2: Ren misses.
+    const show2 = await ren.waitFor((m) => m.t === 'mg:msg' && m.data.type === 'show' && m.data.round === 2, 4000, 'show 2');
+    assert(show2.data.sequence.length === show1.data.sequence.length + 1, 'sequence grows');
+    await ren.waitFor((m) => m.t === 'mg:msg' && m.data.type === 'input', 7000, 'input 2');
+    await ren.req('mg:input', { data: { type: 'tap', scroll: (show2.data.sequence[0] + 1) % 6 } });
+    const res = await ren.waitFor((m) => m.t === 'mg:results', 4000, 'results');
+    const r1 = res.results[0];
+    assert(r1.name === 'Ren' && r1.place === 1 && r1.score === show1.data.sequence.length, `ren result ${JSON.stringify(r1)}`);
+    assert(r1.coins === r1.score * 2 + 10 && r1.xp === r1.score + 10, 'reward formula with win bonus');
+    assert(res.results[1].name === 'Aya' && res.results[1].score === 0, 'aya result');
+    await ren.waitFor((m) => m.t === 'you' && m.ninja.coins === 100 + r1.coins, 2000, 'coins saved');
+    const mg = await admin.req('admin:minigames');
+    assert(mg.games.find((g) => g.id === 'dojo-memory').top[0].name === 'Ren', 'leaderboard');
+    const stats = (await ren.req('mg:list')).stats.find((x) => x.game_id === 'dojo-memory');
+    assert(stats && stats.plays === 1 && stats.wins === 1, 'player stats');
+  });
+
+  await check('admin closes a minigame; players in its lobby are sent back', async () => {
+    await admin.req('admin:setMinigame', { game: 'dojo-memory', enabled: false });
+    await ren.waitFor((m) => m.t === 'mg:closed', 2000, 'closed');
+    await expectError(ren.req('mg:join', { spotId: 'mg1' }), 'closed');
+    await admin.req('admin:setMinigame', { game: 'dojo-memory', enabled: true, multiplier: 2 });
+  });
+
+  await check('map editor places, validates and removes pavilions', async () => {
+    const plaza = (await admin.req('admin:rooms')).rooms.find((r) => r.id === 'plaza');
+    const base = { roomId: 'plaza', tiles: plaza.tiles, spawn: plaza.spawn };
+    await expectError(admin.req('admin:saveDraft', { ...base, minigames: [{ game: 'dojo-memory', x: 18, y: 8 }] }), 'bad'); // covers a door
+    await expectError(admin.req('admin:saveDraft', { ...base, minigames: [{ game: 'dojo-memory', x: 8, y: 15 }, { game: 'dojo-memory', x: 9, y: 16 }] }), 'bad'); // overlap
+    await expectError(admin.req('admin:saveDraft', { ...base, minigames: [{ game: 'not-a-game', x: 30, y: 20 }] }), 'bad');
+    const r = await admin.req('admin:publishRoom', { ...base, minigames: [{ id: 'mg1', game: 'dojo-memory', x: 8, y: 15 }, { game: 'dojo-memory', x: 22, y: 19 }] });
+    assert(r.version === 3, 'published');
+    const e = await ren.waitFor((m) => m.t === 'room:enter' && m.updated, 2000, 'room update');
+    assert(e.room.minigames.length === 2 && e.room.minigames[1].id === 'mg2', `ids ${e.room.minigames.map((x) => x.id)}`);
+    await admin.req('admin:publishRoom', { ...base, minigames: [{ id: 'mg1', game: 'dojo-memory', x: 8, y: 15 }] });
+  });
+
+  ren.close(); aya.close();
+
   await check('admin kicks a ninja; others see them leave', async () => {
     const id = (await admin.req('admin:players', { text: 'kai' })).players[0].id;
     await admin.req('admin:kick', { id, reason: 'test' });
     const k = await kai.waitFor((m) => m.t === 'kicked', 2000, 'kicked');
     assert(/test/.test(k.reason), 'kick reason');
-    const w = await admin.waitFor((m) => m.t === 'admin:world' && m.online === 2, 2000, 'online drops to 2');
+    const w = await admin.waitFor((m) => m.t === 'admin:world' && m.online === 2, 3000, 'online drops to 2');
     assert(!w.rooms.some((r) => r.players.some((p) => p.name === 'Kai')), 'Kai gone');
   });
 
