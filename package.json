@@ -1,0 +1,13 @@
+{
+  "name": "clubdojo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Locally hosted ninja world: server, player client, admin client.",
+  "workspaces": ["server", "player-client", "admin-client"],
+  "scripts": {
+    "server": "npm start -w server",
+    "player": "npm start -w player-client",
+    "admin": "npm start -w admin-client",
+    "smoke": "node scripts/smoke-test.js"
+  }
+}

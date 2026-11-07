@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src ws: wss:; img-src 'self' data:">
+  <title>ClubDojo Admin</title>
+  <link rel="stylesheet" href="../shared/client/styles.css">
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+  <div class="admin-layout">
+    <div id="app" class="admin-game"></div>
+    <aside id="dock" class="dock" aria-label="Admin tools" hidden></aside>
+  </div>
+  <script src="../shared/protocol.js"></script>
+  <script src="../shared/client/net.js"></script>
+  <script src="../shared/client/world.js"></script>
+  <script src="../shared/client/game.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>
