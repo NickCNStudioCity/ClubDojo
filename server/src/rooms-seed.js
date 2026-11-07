@@ -137,43 +137,54 @@ function ramen() {
   });
 }
 
-// Sports Park: east of the Forest Village. Four pitches: soccer, tennis, basketball and a
-// go-kart track. The courts are flat "court" / "track" props drawn over the grass.
+// Sports Park: east of the Forest Village. Four pitches: soccer, tennis and a football field on the
+// north side, basketball and a go-kart track on the south. The pitches are flat "court" / "track"
+// props drawn over the grass. Pavilions for the four new games sit on the walkway's north and south edges.
 function sportsPark() {
-  const g = grid('g');
-  rect(g, 0, 0, W, 3, '#'); // tree line along the top
+  const SW = 48; // the park is wider than the village to fit the football field
+  const g = Array.from({ length: H }, () => Array(SW).fill('g'));
+  rect(g, 0, 0, SW, 3, '#'); // tree line along the top
   rect(g, 0, 3, 1, H - 3, '#'); // west edge, gap at the gate
-  rect(g, 39, 3, 1, H - 3, '#'); // east edge
-  rect(g, 0, H - 1, W, 1, '#'); // south edge
+  rect(g, SW - 1, 3, 1, H - 3, '#'); // east edge
+  rect(g, 0, H - 1, SW, 1, '#'); // south edge
   rect(g, 0, 13, 1, 2, ':'); // gate (portal back to the village)
-  rect(g, 1, 13, 38, 2, ':'); // main walkway
+  rect(g, 1, 13, SW - 2, 2, ':'); // main walkway
   const trees = [];
-  for (let y = 3; y < H - 1; y++) for (const x of [0, W - 1]) if (g[y][x] === '#') trees.push({ type: 'tree', x, y, style: y % 2 ? 'pine' : 'leafy' });
-  for (let x = 2; x < W - 2; x += 3) if (g[H - 1][x] === '#') trees.push({ type: 'tree', x, y: H - 1, style: x % 2 ? 'leafy' : 'pine' });
+  for (let y = 3; y < H - 1; y++) for (const x of [0, SW - 1]) if (g[y][x] === '#') trees.push({ type: 'tree', x, y, style: y % 2 ? 'pine' : 'leafy' });
+  for (let x = 2; x < SW - 2; x += 3) if (g[H - 1][x] === '#') trees.push({ type: 'tree', x, y: H - 1, style: x % 2 ? 'leafy' : 'pine' });
   return {
     id: 'sports-park',
     name: 'Sports Park',
-    width: W,
+    seedVersion: 5, // widened for the football field; existing servers pick it up
+    width: SW,
     height: H,
     tiles: rows(g),
     spawn: { x: 4, y: 14 },
     portals: [{ x: 0, y: 13, w: 1, h: 2, to: 'plaza', tx: 36, ty: 10, label: 'Forest Village' }],
-    minigames: [],
+    // Pavilions: a 3x2 spot whose pad (the tile below its middle) must be walkable.
+    minigames: [
+      { id: 'mg1', game: 'soccer', x: 6, y: 11 },
+      { id: 'mg2', game: 'tennis', x: 24, y: 11 },
+      { id: 'mg3', game: 'football', x: 39, y: 11 },
+      { id: 'mg4', game: 'basketball', x: 13, y: 16 },
+    ],
     props: [
-      { type: 'forest', x: 0, y: 0, w: W, h: 3 },
+      { type: 'forest', x: 0, y: 0, w: SW, h: 3 },
       ...trees,
       { type: 'court', sport: 'soccer', x: 2, y: 3, w: 16, h: 8 },
       { type: 'court', sport: 'tennis', x: 21, y: 3, w: 12, h: 6 },
+      { type: 'court', sport: 'football', x: 34, y: 3, w: 12, h: 7 },
       { type: 'court', sport: 'basketball', x: 2, y: 16, w: 10, h: 6 },
       { type: 'track', x: 16, y: 16, w: 20, h: 6 },
-      { type: 'sign', x: 9, y: 12, text: 'Soccer Field' },
-      { type: 'sign', x: 27, y: 12, text: 'Tennis Court' },
+      { type: 'sign', x: 9, y: 9, text: 'Soccer Field' },
+      { type: 'sign', x: 27, y: 9, text: 'Tennis Court' },
+      { type: 'sign', x: 44, y: 9, text: 'Football Field' },
       { type: 'sign', x: 7, y: 15, text: 'Basketball' },
       { type: 'sign', x: 26, y: 15, text: 'Go-Kart Track' },
       { type: 'sign', x: 36, y: 12, text: 'Sports Park' },
-      { type: 'lantern', x: 14, y: 12 },
+      { type: 'lantern', x: 18, y: 12 },
       { type: 'lantern', x: 34, y: 15 },
-      { type: 'lantern', x: 14, y: 15 },
+      { type: 'lantern', x: 12, y: 15 },
     ],
   };
 }
@@ -183,5 +194,5 @@ function sportsPark() {
 function seedRooms() {
   return [plaza(), dojo(), ramen(), sportsPark()];
 }
-seedRooms.SEED_VERSION = 4;
+seedRooms.SEED_VERSION = 5;
 module.exports = seedRooms;
