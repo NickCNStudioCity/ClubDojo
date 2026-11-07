@@ -12,6 +12,7 @@ const DB = require('./db');
 const filter = require('./filter');
 const minigameRegistry = require('./minigames/registry');
 const { createEngine } = require('./minigames/engine');
+const updater = require('../../shared/updater');
 
 const JOIN_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const IDLE_KICK_MS = 30 * 60 * 1000;
@@ -704,6 +705,7 @@ function start(options = {}) {
   return {
     config,
     get joinCode() { return joinCode; },
+    get online() { return authed().length; },
     ready: new Promise((resolve, reject) => { wss.once('listening', resolve); wss.once('error', reject); }),
     close() {
       clearInterval(ticker); clearInterval(heartbeat); clearInterval(discoveryTimer); clearTimeout(presenceTimer);
@@ -717,17 +719,72 @@ function start(options = {}) {
 }
 
 // Command-line entry: start, print the banner, save and close cleanly on Ctrl+C.
+// Packaged ClubDojo-Server.exe only: it checks GitHub for a newer build at startup and hourly.
+// A downloaded build is installed at startup, or once nobody is online.
+//   --reinstall   download the latest release again even if it matches this file
+//   --no-update   never check (also CLUBDOJO_NO_UPDATE=1)
 function runCli() {
-  const server = start();
-  server.ready.catch((e) => {
-    console.error(e.code === 'EADDRINUSE' ? `Port ${server.config.port} is already in use. Is another ClubDojo server running?` : e);
-    // Keep a double-clicked console window open long enough to read the error.
-    setTimeout(() => process.exit(1), 15000);
-  });
-  server.ready.then(() => console.log('  Press Ctrl+C to save and stop the server.\n'));
-  const shutdown = () => { console.log('\nSaving and shutting down...');server.close().then(() => process.exit(0)); };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  const argv = process.argv.slice(2);
+  let packaged = false;
+  try { packaged = require('node:sea').isSea(); } catch {}
+  const autoUpdate = packaged && !argv.includes('--no-update') && process.env.CLUBDOJO_NO_UPDATE !== '1';
+  const reinstall = packaged && argv.includes('--reinstall');
+  const relaunchArgs = argv.filter((a) => a !== '--reinstall');
+  const updateOpts = {
+    kind: 'Server', target: process.execPath,
+    stateFile: path.join(process.env.CLUBDOJO_DATA || defaultDataDir(), 'update-state.json'),
+    log: (m) => console.log(`  ${m}`),
+  };
+
+  let server = null;
+  let pending = null; // a downloaded build waiting for an empty server
+  let checking = false;
+  const checkForUpdate = async (force) => {
+    if (checking || pending) return;
+    checking = true;
+    try {
+      const r = await updater.checkForUpdate({ ...updateOpts, force });
+      if (r.status === 'staged') { pending = r; console.log(`  Update ${r.asset.name} downloaded. It installs once nobody is online.`); }
+    } catch (e) {
+      console.log(`  Update check failed: ${e.message}`);
+    } finally { checking = false; }
+  };
+  const installWhenIdle = async () => {
+    if (!pending || !server || server.online > 0) return;
+    console.log(`  Installing ${pending.asset.name}. The server restarts in a moment.`);
+    updater.applyUpdate(pending, { args: relaunchArgs });
+    await server.close();
+    process.exit(0);
+  };
+
+  const shutdown = () => { console.log('\nSaving and shutting down...'); server.close().then(() => process.exit(0)); };
+  const startServer = () => {
+    server = start();
+    server.ready.catch((e) => {
+      console.error(e.code === 'EADDRINUSE' ? `Port ${server.config.port} is already in use. Is another ClubDojo server running?` : e);
+      // Keep a double-clicked console window open long enough to read the error.
+      setTimeout(() => process.exit(1), 15000);
+    });
+    server.ready.then(() => console.log('  Press Ctrl+C to save and stop the server.\n'));
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+    if (autoUpdate) {
+      setInterval(() => checkForUpdate(false), 60 * 60 * 1000);
+      setInterval(installWhenIdle, 60 * 1000);
+    }
+  };
+
+  (async () => {
+    if (autoUpdate || reinstall) {
+      await checkForUpdate(reinstall);
+      if (pending) {
+        console.log(`  Installing ${pending.asset.name}. The server restarts in a moment.`);
+        updater.applyUpdate(pending, { args: relaunchArgs });
+        process.exit(0);
+      }
+    }
+    startServer();
+  })();
 }
 
 module.exports = { start, runCli };
