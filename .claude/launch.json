@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev-web",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/dev-web.js"],
+      "port": 5173
+    }
+  ]
+}

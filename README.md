@@ -1,0 +1,79 @@
+# ClubDojo v1
+
+A LAN-hosted ninja village (see [PROJECT_OUTLINE.md](PROJECT_OUTLINE.md)). This first version has three parts:
+
+| Part | Folder | What it does |
+|---|---|---|
+| World Server | `server/` | Node.js + WebSocket (port 7777) + SQLite. The single source of truth: validates every move, chat line and admin action. |
+| Player client | `player-client/` | Electron game window: connect, create a ninja or log in, walk the village, chat, emotes, customize your gi and headband. |
+| Admin client | `admin-client/` | The same game plus Grandmaster tools: Live World, Players, Map Editor, Logs, Server. |
+
+Shared code lives in `shared/`: `protocol.js` (constants, belts, tiles, pathfinding) and `client/` (network, canvas world, HUD) used by both apps.
+
+## Requirements
+
+- Node.js 22.5 or newer on the host (uses the built-in `node:sqlite`; tested on Node 24).
+- Laptops need the same Node install only to run from source. Packaged installers come in the polish phase.
+
+## Run it
+
+```bash
+npm install
+```
+
+On the host PC:
+
+```bash
+npm run server
+```
+
+The server prints the LAN address (for example `192.168.1.20:7777`) and a 6-character **join code**. On first run it also creates a Grandmaster login and prints it (it is saved to `server/data/FIRST_RUN_ADMIN.txt`; reset the password from the admin client, then delete the file).
+
+On each laptop:
+
+```bash
+npm run player
+```
+
+For the admin (on the host or any laptop):
+
+```bash
+npm run admin
+```
+
+Enter the address and join code, or pick the server from **Found on your network** (UDP auto-discovery on port 7778). Allow inbound TCP 7777 through the host firewall.
+
+### Server options (environment variables)
+
+| Variable | Default |
+|---|---|
+| `CLUBDOJO_PORT` | `7777` |
+| `CLUBDOJO_MAX_PLAYERS` | `30` |
+| `CLUBDOJO_NAME` | `<hostname> Dojo` |
+| `CLUBDOJO_DATA` | `server/data` |
+| `CLUBDOJO_JOIN_CODE` | random, then saved |
+| `CLUBDOJO_ADMIN_PASSWORD` | random (first run only) |
+| `CLUBDOJO_DISCOVERY` | `1` (set `0` to turn off the UDP beacon) |
+
+Promote an account from the host console: `npm run set-role -w server -- <username> grandmaster`.
+
+Back up by copying `server/data/clubdojo.sqlite`, or use **Server > Back up now** in the admin client.
+
+## What is in v1
+
+- Accounts with bcrypt-hashed passwords, rate-limited login, name and chat filter, roles (ninja, sensei, grandmaster).
+- Three rooms: Snow Plaza, Main Dojo and Ramen House, with doors between them. Click to walk; the server checks every path.
+- Room chat with speech bubbles, global announcements, emotes (keys 1-6), presence and online count, mini map.
+- HUD from the design mockup: belt card and XP bar, room tag, coins, quest tracker, chat, and the menu. Quest Log shows the belt path; Ninja lets you change gi and headband; Inventory, Shop, Friends and Minigames are placeholders for later phases.
+- Admin: live room view with teleport, kick and broadcast; player search with coins, XP, belt, role, mute, ban and password reset; tile Map Editor with undo, drafts and publish (players in the room get the update live); chat, login and admin-action logs; server info, new join code, and backup.
+- Position, look and progress are saved per ninja.
+
+## Testing
+
+```bash
+npm run smoke
+```
+
+Starts a throwaway server and connects two players and an admin over real WebSockets: registration, join-code check, movement, doors, chat filter, announcements, teleport, rewards, mute, map publish, logs, backup, kick and persistence.
+
+For quick UI work in a browser, `node scripts/dev-web.js` serves the pages at `http://localhost:5173/player-client/index.html` and `/admin-client/index.html` (no LAN discovery there).
