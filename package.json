@@ -1,13 +1,23 @@
 {
   "name": "clubdojo",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Locally hosted ninja world: server, player client, admin client.",
-  "workspaces": ["server", "player-client", "admin-client"],
+  "workspaces": [
+    "server",
+    "player-client",
+    "admin-client"
+  ],
   "scripts": {
     "server": "npm start -w server",
     "player": "npm start -w player-client",
     "admin": "npm start -w admin-client",
-    "smoke": "node scripts/smoke-test.js"
+    "smoke": "node scripts/smoke-test.js",
+    "release": "node scripts/build-release.js"
+  },
+  "devDependencies": {
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "postject": "^1.0.0-alpha.6"
   }
 }

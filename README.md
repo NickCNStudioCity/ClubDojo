@@ -10,7 +10,19 @@ A LAN-hosted ninja village (see [PROJECT_OUTLINE.md](PROJECT_OUTLINE.md)). This 
 
 Shared code lives in `shared/`: `protocol.js` (constants, belts, tiles, pathfinding) and `client/` (network, canvas world, HUD) used by both apps.
 
-## Requirements
+## Release files (Windows)
+
+`npm run release` builds three standalone files into `dist/`. No Node.js or install is needed to run them:
+
+| File | Run it on | Notes |
+|---|---|---|
+| `ClubDojo-Server-1.0.0.exe` | The host PC | Opens a console showing the address, join code and (first run) the admin login. Data is kept in a `ClubDojo-Data` folder next to the exe, so put the exe in a folder you will keep. |
+| `ClubDojo-Player-1.0.0.exe` | Each laptop | Portable: double-click to play. |
+| `ClubDojo-Admin-1.0.0.exe` | Host or any laptop | Portable: log in with a Grandmaster account. |
+
+The files are not code-signed, so Windows SmartScreen may show "Windows protected your PC": choose **More info > Run anyway**. Windows Firewall will ask to allow the server on first run; allow it on private networks.
+
+## Requirements (running from source)
 
 - Node.js 22.5 or newer on the host (uses the built-in `node:sqlite`; tested on Node 24).
 - Laptops need the same Node install only to run from source. Packaged installers come in the polish phase.
