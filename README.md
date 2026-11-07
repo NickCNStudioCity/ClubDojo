@@ -22,6 +22,15 @@ Shared code lives in `shared/`: `protocol.js` (constants, belts, tiles, pathfind
 
 The files are not code-signed, so Windows SmartScreen may show "Windows protected your PC": choose **More info > Run anyway**. Windows Firewall will ask to allow the server on first run; allow it on private networks.
 
+### Updates
+
+The packaged apps update themselves from the latest GitHub release (`NickCNStudioCity/ClubDojo`):
+
+- **Player and Admin** check at launch and every hour. A newer file is downloaded and installed, then the app restarts. The Player's game session is disconnected when that happens. Press **Alt** to show the menu bar, then **Updates > Check for updates** or **Updates > Reinstall latest version**.
+- **Server** checks at start and every hour. A new build is installed at start, or once nobody is online. Start it with `--reinstall` to download the latest release again, or with `--no-update` to turn checks off (or set `CLUBDOJO_NO_UPDATE=1`).
+
+A build is detected by its file checksum, not its version number. So if you re-upload a file to the same release, the apps still pick it up. To publish: make a GitHub release marked **Latest**, and attach the three `.exe` files named `ClubDojo-Server-*`, `ClubDojo-Player-*` and `ClubDojo-Admin-*`. Updates only work for the packaged `.exe` files, not for `npm run` from source.
+
 ## Requirements (running from source)
 
 - Node.js 22.5 or newer on the host (uses the built-in `node:sqlite`; tested on Node 24).
