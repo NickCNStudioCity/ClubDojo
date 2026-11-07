@@ -5,6 +5,7 @@
 // Full guide: docs/minigames/README.md
 const INSTALLED = [
   require('./games/dojo-memory'),
+  require('./games/go-kart-race'),
 ];
 
 // Shown in the in-game minigame list as "coming soon" until a module is installed.
