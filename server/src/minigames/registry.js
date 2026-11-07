@@ -5,8 +5,10 @@
 // Full guide: docs/minigames/README.md
 const INSTALLED = [
   require('./games/dojo-memory'),
+  require('./games/fishing'),
   require('./games/sled-race'),
   require('./games/go-kart-race'),
+  require('./games/cart-surfer'),
 ];
 
 // Shown in the in-game minigame list as "coming soon" until a module is installed.
@@ -14,7 +16,6 @@ const PLANNED = [
   { id: 'shuriken-arena', name: 'Shuriken Arena', description: 'Throw shuriken at moving targets. Highest score wins.', minPlayers: 2, maxPlayers: 8, color: '#c0392b', icon: '✴️' },
   { id: 'snowfall-dodge', name: 'Snowfall Dodge', description: 'Dodge falling snowballs and icicles. Longest survival wins.', minPlayers: 1, maxPlayers: 8, color: '#2f6fd1', icon: '❄️' },
   { id: 'rooftop-race', name: 'Rooftop Race', description: 'Race across rooftops and jump gaps without falling.', minPlayers: 1, maxPlayers: 6, color: '#e67e22', icon: '🏃' },
-  { id: 'ice-fishing', name: 'Ice Fishing', description: 'Time the catch to land rare fish for coins.', minPlayers: 1, maxPlayers: 1, color: '#16a085', icon: '🎣' },
 ];
 
 const REQUIRED = ['id', 'name', 'description', 'minPlayers', 'maxPlayers', 'create'];
