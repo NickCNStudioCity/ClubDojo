@@ -1,0 +1,111 @@
+<!doctype html>
+<!-- Dev only: runs the Go-Kart Race server rules in the browser and mounts the real client, so the
+     Mode 7 view can be checked without a server, login or pavilion. Bots fill the other slots.
+     Open with: node scripts/dev-web.js, then http://localhost:5173/scripts/dev/go-kart-harness.html
+     Options: ?bots=0..3 (default 3) -->
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Go-Kart harness</title>
+  <link rel="stylesheet" href="../../shared/client/styles.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: #1b2430; color: #fff; font-family: system-ui, sans-serif; }
+    #stage { height: 100vh; }
+  </style>
+  <script src="../../shared/protocol.js"></script>
+  <script src="../../shared/client/avatar.js"></script>
+  <script src="../../shared/client/minigames/games/go-kart-mode7/track.js"></script>
+</head>
+<body>
+  <div id="stage"></div>
+  <script>
+  (async function () {
+    const h = (tag, attrs, ...kids) => {
+      const el = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs || {})) {
+        if (v == null || v === false) continue;
+        if (k === 'class') el.className = v;
+        else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+        else el.setAttribute(k, v === true ? '' : v);
+      }
+      for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
+      return el;
+    };
+
+    // Server module: CommonJS, so give it a module object and a require() for the shared track.
+    const src = await (await fetch('../../server/src/minigames/games/go-kart-race.js')).text();
+    const mod = { exports: {} };
+    new Function('module', 'exports', 'require', src)(mod, mod.exports, () => window.ClubDojoKartTrack);
+    const game = mod.exports;
+
+    // Client module registers itself.
+    let clientDef = null;
+    window.ClubDojoMinigames = { register: (d) => { clientDef = d; } };
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = '../../shared/client/minigames/games/go-kart-race.js';
+      s.onload = resolve; s.onerror = reject; document.head.append(s);
+    });
+
+    const bots = Math.max(0, Math.min(3, Number(new URLSearchParams(location.search).get('bots') ?? 3)));
+    const colors = ['#20262e', '#5a3e8c', '#1f6f5c', '#8c3e3e'];
+    const players = Array.from({ length: bots + 1 }, (_, i) => ({
+      id: i + 1, name: i ? `Bot ${i}` : 'You',
+      loadout: { v: 1, id: i + 1, name: i ? `Bot ${i}` : 'You', color: colors[i], headband: ['#e8453c', '#2f6fd1', '#3fbf7f', '#f5b82e'][i], belt: 'white', accessories: {} },
+    }));
+
+    let client = null;
+    const timers = new Set();
+    const start = performance.now();
+    const sctx = {
+      game: game.id, settings: { ...game.defaults }, players,
+      isPlaying: () => true,
+      send: (id, data) => { if (id === 1 && client) client.onMessage(data); },
+      broadcast: (data) => { if (client) client.onMessage(data); if (data.type === 'state') lastState = data; },
+      after: (ms, fn) => { const t = setTimeout(fn, ms); timers.add(t); return t; },
+      every: (ms, fn) => { const t = setInterval(fn, ms); timers.add(t); return t; },
+      cancel: (t) => { clearTimeout(t); clearInterval(t); },
+      now: () => performance.now() - start,
+      randomInt: (n) => Math.floor(Math.random() * n),
+      end: (results) => { console.log('race ended', results); clearInterval(loop); if (client) client.onResults(results); },
+      log: console.log,
+    };
+    let lastState = null;
+    const server = game.create(sctx);
+    client = clientDef.mount({
+      el: document.getElementById('stage'), youId: 1, players, h, avatar: window.ClubDojoAvatar,
+      toast: (m) => console.log('toast', m), protocol: window.ClubDojoProtocol,
+      send: (data) => server.input(1, data),
+    });
+    server.start();
+    window.__kart = { server, players, get state() { return lastState; } };
+
+    // Bots aim at a point a little further along the centreline.
+    const T = window.ClubDojoKartTrack;
+    function botControls() {
+      if (!lastState) return;
+      for (const k of lastState.karts) {
+        if (k.id === 1) continue;
+        const n = T.nearest(k.x, k.y);
+        const s = (n.s + 90 + k.id * 7) % T.TRACK.length;
+        let i = 0; while (T.TRACK.cum[i + 1] < s) i++;
+        const t = (s - T.TRACK.cum[i]) / T.TRACK.seg[i].len;
+        const tx = T.TRACK.pts[i].x + T.TRACK.seg[i].dx * t, ty = T.TRACK.pts[i].y + T.TRACK.seg[i].dy * t;
+        const want = Math.atan2(ty - k.y, tx - k.x);
+        const d = Math.atan2(Math.sin(want - k.h), Math.cos(want - k.h));
+        server.input(k.id, { type: 'ctl', steer: Math.max(-1, Math.min(1, d * 3)), gas: true, brake: false });
+      }
+    }
+
+    let last = performance.now();
+    const loop = setInterval(() => {
+      const now = performance.now();
+      server.tick((now - last) / 1000);
+      last = now;
+      botControls();
+    }, 1000 / game.tickRate);
+  })().catch((e) => { document.body.textContent = e.stack; });
+  </script>
+</body>
+</html>
