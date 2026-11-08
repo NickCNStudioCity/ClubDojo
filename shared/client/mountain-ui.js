@@ -144,7 +144,7 @@
         conn.request('mt:cocoa').then(() => { closeModal(); toast('☕ Warm all the way down. Warming up pays more today.'); world.floatText(state.me.id, '☕'); })
           .catch((e) => { buy.disabled = false; toast(e.message, true); });
       } }, `Buy cocoa (${m.cocoaPrice} coins)`) : h('span');
-      openModal('Ember Lodge', npc.name,
+      openModal(npc.kicker || 'Ember Lodge', npc.name,
         h('div', { class: 'preview-row' }, portrait(npc), h('p', { class: 'sensei-say' }, m.cocoa ? '“Still got that cup in your hands? Off you go, the spring is just down the road.”' : `“Cold out there, ${state.me.name}. One of these and you'll stay warm all day.”`)),
         h('p', { class: 'muted' }, 'One cup a day. Earns you an extra coin every time you warm up in the hot spring or by the campfire.'),
         h('div', { class: 'foot' }, h('button', { class: 'btn ghost', onclick: closeModal }, 'Maybe later'), buy));

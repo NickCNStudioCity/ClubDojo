@@ -58,7 +58,7 @@ async function buildClient(kind) {
     if (f === 'package.json' || f === 'node_modules') continue;
     copy(`${kind}-client/${f}`, path.join(stage, `${kind}-client`, f));
   }
-  for (const f of ['protocol.js', 'updater.js', 'electron-main.js', 'electron-preload.js', 'client']) copy(`shared/${f}`, path.join(stage, 'shared', f));
+  for (const f of ['protocol.js', 'updater.js', 'electron-main.js', 'electron-preload.js', 'client', 'cards']) copy(`shared/${f}`, path.join(stage, 'shared', f));
   fs.writeFileSync(path.join(stage, 'package.json'), JSON.stringify({
     name: `clubdojo-${kind}`, productName, version, main: `${kind}-client/main.js`,
     description: isAdmin ? 'ClubDojo admin client' : 'ClubDojo player client', author: 'ClubDojo',

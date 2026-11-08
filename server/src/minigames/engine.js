@@ -9,7 +9,7 @@ const RESULTS_MS = 8000;
 const ENDING_MS = 3500; // the round's last moments stay on screen this long, then fade to the results
 const REWARD_CAP = { coins: 500, xp: 250 }; // per match, after the admin multiplier
 
-function createEngine({ db, registry, sendTo, toRoom, onRewarded, log = () => {} }) {
+function createEngine({ db, registry, sendTo, toRoom, onRewarded, playerData = () => undefined, log = () => {} }) {
   const lobbies = new Map(); // key -> lobby
   const byPlayer = new Map(); // accountId -> lobby
 
@@ -155,7 +155,7 @@ function createEngine({ db, registry, sendTo, toRoom, onRewarded, log = () => {}
     return {
       game: l.game.id,
       settings: settings(l.game.id).tuning,
-      players: [...l.players.values()].map((p) => ({ id: p.id, name: p.loadout.name, loadout: p.loadout })),
+      players: [...l.players.values()].map((p) => ({ id: p.id, name: p.loadout.name, loadout: p.loadout, data: playerData(p.id, l.game.id) })),
       isPlaying: isIn,
       send: (id, data) => { if (isIn(id)) sendTo(id, { t: 'mg:msg', key: l.key, data }); },
       broadcast: (data) => toLobby(l, { t: 'mg:msg', key: l.key, data }),
@@ -189,7 +189,7 @@ function createEngine({ db, registry, sendTo, toRoom, onRewarded, log = () => {}
       r.name = l.players.get(r.id).loadout.name;
       db.recordMinigameScore(r.id, l.game.id, r.score, r.place, rows.length);
       if (r.coins || r.xp) db.addRewards(r.id, r.coins, r.xp);
-      onRewarded(r.id, { game: l.game.id, place: r.place, score: r.score, players: rows.length });
+      onRewarded(r.id, { game: l.game.id, place: r.place, score: r.score, players: rows.length, detail: r.detail });
     }
     log(`[minigame] ${l.game.id} at ${l.key} finished: ${rows.map((r) => `${r.name}=${r.score}`).join(', ')}`);
     const endingMs = opts && Number.isFinite(opts.endingMs) ? Math.max(0, Math.min(ENDING_MS, opts.endingMs)) : ENDING_MS;

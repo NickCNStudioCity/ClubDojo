@@ -13,6 +13,8 @@ const INSTALLED = [
   require('./games/basketball'),
   require('./games/soccer'),
   require('./games/football'),
+  require('./games/turncoat'),
+  require('./games/ring-out'),
 ];
 
 // Shown in the in-game minigame list as "coming soon" until a module is installed.

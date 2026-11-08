@@ -101,6 +101,17 @@ Back up by copying `server/data/clubdojo.sqlite`, or use **Server > Back up now*
 
 This changes the protocol to version 2, so v1.0.0 clients are asked to update.
 
+## The Cafe and card games
+
+The Cafe is a room off Mountain Town with four card tables, a fire that pays like the hot spring, and the card dealer. Two original card games share one 36-card set:
+
+- **Turncoat**: beat a neighbour with a stronger side and it joins you. Most points wins.
+- **Ring Out**: beat a neighbour and it is shoved; lines get heavier, and cards pushed off the mat are knocked out. Shrines plus knockouts wins.
+
+Sit alone to climb the five-rung House Ladder, or wait for a second ninja to play each other. Rules and data are in `shared/cards/` and run on both the server and the client. Collections (copies, foils, Ink, packs, three decks) are saved in each ninja's progress by `server/src/cards.js`. Open the collection from the **Cards** menu button or Dealer Ren.
+
+`npm run check:cards` checks the rules, collection and Cafe layout, then simulates thousands of matches to catch unfair boards and unbalanced cards (takes a few minutes; add `-- --report` for per-card win rates).
+
 ## Testing
 
 ```bash

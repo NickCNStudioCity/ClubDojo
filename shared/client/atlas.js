@@ -17,6 +17,7 @@
     cave: { x: 365, y: 705, art: 'cave', scale: 1 },
     'mountain-town': { x: 1245, y: 715, art: 'town', scale: 1 },
     'mountain-peak': { x: 1362, y: 505, art: 'summit', scale: 0.95 },
+    cafe: { x: 1110, y: 770, art: 'cafe', scale: 0.8 },
   };
 
   const COAST = [[250, 200], [420, 125], [640, 95], [860, 130], [1060, 92], [1290, 130], [1440, 250], [1470, 420], [1440, 600], [1495, 740], [1370, 845], [1120, 822], [900, 862], [660, 838], [430, 852], [230, 818], [135, 680], [180, 520], [118, 400], [150, 280]];
@@ -282,6 +283,12 @@
       + roofShape(110, 44, 78, 26, '#c8453a')
       + '<circle cx="110" cy="74" r="9" fill="#f5b82e"/><path d="M104 74h12M110 68v12" stroke="#7a3b2e" stroke-width="2.5"/>'
       + '<path d="M110 18V4" stroke="#f5b82e" stroke-width="4" stroke-linecap="round"/>',
+    cafe: groundArt
+      + house(110, 162, 118, 62, '#c89a6a', '#6b3f26')
+      + '<rect x="58" y="110" width="104" height="12" fill="#2f6d62"/>'
+      + '<path d="M84 44h48v18q0 20-24 20t-24-20z" fill="#fafdff"/><path d="M132 50q18 0 18 12t-20 12" fill="none" stroke="#fafdff" stroke-width="7"/>'
+      + '<path d="M90 50h36" stroke="#7a4a2a" stroke-width="7" stroke-linecap="round"/>'
+      + '<g class="atlas-steam" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" opacity=".85"><path d="M98 36q-6-8 0-15t0-15"/><path d="M118 36q-6-8 0-15t0-15"/></g>',
     ramen: groundArt
       + house(110, 162, 118, 62, '#e7c79a', '#7a3b2e')
       + '<rect x="58" y="104" width="104" height="19" fill="#c8362d"/>'

@@ -64,6 +64,7 @@ function parse(json) {
     challengesDone: s.challengesDone || 0,
     daily: s.daily && typeof s.daily === 'object' ? s.daily : null,
     mountain: s.mountain && typeof s.mountain === 'object' ? s.mountain : {}, // server/src/mountain.js
+    cards: s.cards && typeof s.cards === 'object' ? s.cards : null, // server/src/cards.js
   };
 }
 
