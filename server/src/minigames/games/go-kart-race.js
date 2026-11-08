@@ -41,7 +41,8 @@ module.exports = {
   // The engine calls tick() at this rate; tick() then runs fixed physics steps (see STEP below).
   tickRate: 60,
 
-  defaults: { laps: 3, timeLimitMs: 120000, maxSpeed: 330, offroadSpeed: 150, accel: 300, brake: 380, turnRate: 2.4 },
+  defaults: { laps: 3, timeLimitMs: 120000, maxSpeed: 201, // 201 units/s is 45 mph (see MPH_PER_UNIT on the client)
+offroadSpeed: 150, accel: 300, brake: 380, turnRate: 2.4 },
 
   // Base rewards per racer; the engine applies the admin multiplier and the per-match cap.
   rewards(result, { players }) {
