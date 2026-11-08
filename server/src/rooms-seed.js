@@ -190,41 +190,77 @@ function sportsPark() {
   };
 }
 
-// Grotto: a rocky yard south of the Forest Village. The Cart Surfer cave is cut into the
-// north rock face. The cave floor is dirt; the cave prop draws the rock rim and the dark hollow.
-// Layout: cave hollow x 15-24, y 5-8; mouth at (19-20, 9); cart pavilion at (18, 5), pad (19, 7).
+// Grotto: a rocky yard south of the Forest Village. The Cart Surfer cave is a building on the
+// north side, like the hub buildings. Its door leads into the cave room (cave()).
+// Layout: building x 15-24, y 3-8; door portal (19-20, 9); path down to the village gate at the bottom.
 function grotto() {
   const GW = 40;
   const g = grid('g');
-  rect(g, 0, 0, GW, 3, '#'); // rock wall along the top
-  rect(g, 0, 3, 1, H - 3, '#'); // west wall
-  rect(g, GW - 1, 3, 1, H - 3, '#'); // east wall
-  rect(g, 0, H - 1, GW, 1, '#'); // south wall, gap at the entrance
+  rect(g, 0, 0, GW, 3, '#'); // rock backdrop along the top
+  rect(g, 15, 3, 10, 6, '#'); // the cave building (drawn by the building prop)
+  rect(g, 0, 3, 1, H - 3, '#'); // west edge
+  rect(g, GW - 1, 3, 1, H - 3, '#'); // east edge
+  rect(g, 0, H - 1, GW, 1, '#'); // south edge, gap at the entrance
   rect(g, 13, 23, 2, 1, ':'); // entrance (portal back to the village)
-  rect(g, 13, 3, 14, 7, '#'); // rock mass behind the cave (drawn by the cave prop)
-  rect(g, 15, 5, 10, 4, ':'); // cave floor
-  rect(g, 19, 9, 2, 1, ':'); // cave mouth onto the yard
-  rect(g, 13, 20, 2, 3, ':'); // path from the entrance into the yard
+  rect(g, 19, 9, 2, 1, ':'); // path from the cave door
+  rect(g, 13, 10, 14, 1, ':'); // yard path across the front of the cave
+  rect(g, 13, 11, 2, 12, ':'); // path down to the gate
+  rect(g, 27, 15, 6, 4, ':'); // gravel patch
+  for (const [x, y, w, h] of [[4, 14, 4, 2], [6, 19, 3, 2], [31, 12, 4, 2]]) rect(g, x, y, w, h, '#'); // boulders
   const trees = [];
   for (let y = 3; y < H - 1; y++) for (const x of [0, GW - 1]) if (g[y][x] === '#') trees.push({ type: 'tree', x, y, style: y % 2 ? 'pine' : 'leafy' });
   return {
     id: 'grotto',
     name: 'Grotto',
-    seedVersion: 7,
+    seedVersion: 9,
     width: GW,
     height: H,
     tiles: rows(g),
     spawn: { x: 14, y: 20 },
-    portals: [{ x: 13, y: 23, w: 2, h: 1, to: 'plaza', tx: 14, ty: 21, label: 'Forest Village' }],
-    minigames: [{ id: 'mg1', game: 'cart-surfer', x: 18, y: 5 }],
+    portals: [
+      { x: 13, y: 23, w: 2, h: 1, to: 'plaza', tx: 14, ty: 21, label: 'Forest Village' },
+      { x: 19, y: 9, w: 2, h: 1, to: 'cave', tx: 20, ty: 20, label: 'Cart Surfer Cave' },
+    ],
+    minigames: [],
     props: [
       { type: 'forest', x: 0, y: 0, w: GW, h: 3 },
       ...trees,
-      { type: 'cave', x: 13, y: 3, w: 14, h: 7 },
-      { type: 'lantern', x: 12, y: 9 },
-      { type: 'lantern', x: 27, y: 9 },
-      { type: 'sign', x: 17, y: 11, text: 'Cart Surfer Cave' },
+      { type: 'building', x: 15, y: 3, w: 10, h: 6, label: 'CAVE', color: '#5d5a63', roof: '#2a2430' },
+      { type: 'lantern', x: 13, y: 9 },
+      { type: 'lantern', x: 26, y: 9 },
       { type: 'sign', x: 11, y: 21, text: 'Grotto' },
+      { type: 'sign', x: 17, y: 11, text: 'Cart Surfer Cave' },
+    ],
+  };
+}
+
+// Cart Surfer cave: a room inside the Grotto building. The mine booth is on the open side;
+// the right side is a closed-off section behind a rockfall.
+function cave() {
+  const g = grid(',');
+  rect(g, 0, 0, W, 4, '#'); // back wall
+  rect(g, 0, 0, 1, H, '#');
+  rect(g, W - 1, 0, 1, H, '#');
+  rect(g, 0, H - 1, W, 1, '#');
+  rect(g, 19, H - 1, 2, 1, ','); // doorway
+  rect(g, 28, 4, 1, H - 4, '#'); // rockfall wall: the closed section sits behind it
+  rect(g, 29, 4, W - 30, 6, '#'); // rock mass filling the closed section's top
+  rect(g, 30, 10, 9, 1, '#');
+  return {
+    id: 'cave',
+    name: 'Cart Surfer Cave',
+    width: W,
+    height: H,
+    tiles: rows(g),
+    spawn: { x: 20, y: 20 },
+    portals: [{ x: 19, y: H - 1, w: 2, h: 1, to: 'grotto', tx: 20, ty: 10, label: 'Grotto' }],
+    minigames: [{ id: 'mg1', game: 'cart-surfer', x: 18, y: 8 }],
+    props: [
+      { type: 'wall', x: 0, y: 0, w: W, h: 4, color: '#4a4650' },
+      { type: 'lantern', x: 8, y: 4 },
+      { type: 'lantern', x: 22, y: 4 },
+      { type: 'sign', x: 18, y: 12, text: 'Cart Surfer' },
+      { type: 'sign', x: 33, y: 13, text: 'CLOSED - Rockfall' },
     ],
   };
 }
@@ -232,7 +268,7 @@ function grotto() {
 // Bump SEED_VERSION and set seedVersion on a room to push a new starter layout to
 // existing servers on their next start (db.js keeps the old layout in room_versions).
 function seedRooms() {
-  return [plaza(), dojo(), ramen(), sportsPark(), grotto()];
+  return [plaza(), dojo(), ramen(), sportsPark(), grotto(), cave()];
 }
-seedRooms.SEED_VERSION = 8;
+seedRooms.SEED_VERSION = 9;
 module.exports = seedRooms;
