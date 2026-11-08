@@ -51,7 +51,7 @@ function plaza() {
   for (const [x, y] of trees) g[y][x] = '#';
   return {
     id: 'plaza',
-    seedVersion: 7, // v7 adds the Grotto portal and moves Cart Surfer into the Grotto cave
+    seedVersion: 8, // v8 moves the go-kart booth from here to the Sports Park track. v7 adds the Grotto portal and moves Cart Surfer into the Grotto cave
     name: 'Forest Village',
     width: W,
     height: H,
@@ -67,7 +67,6 @@ function plaza() {
     minigames: [
       { id: 'mg1', game: 'dojo-memory', x: 8, y: 15 },
       { id: 'mg2', game: 'sled-race', x: 3, y: 12 },
-      { id: 'mg3', game: 'go-kart-race', x: 3, y: 18 },
       { id: 'mg5', game: 'fishing', x: 30, y: 16 },
     ],
     props: [
@@ -156,7 +155,7 @@ function sportsPark() {
   return {
     id: 'sports-park',
     name: 'Sports Park',
-    seedVersion: 6, // v5 widened it for the football field; v6 fixes the walkway and edges past column 40
+    seedVersion: 8, // v5 widened it for the football field; v6 fixes the walkway and edges past column 40; v8 moves the go-kart booth onto the track
     width: SW,
     height: H,
     tiles: rows(g),
@@ -168,6 +167,7 @@ function sportsPark() {
       { id: 'mg2', game: 'tennis', x: 24, y: 11 },
       { id: 'mg3', game: 'football', x: 39, y: 11 },
       { id: 'mg4', game: 'basketball', x: 13, y: 16 },
+      { id: 'mg5', game: 'go-kart-race', x: 26, y: 14 }, // on the north edge of the track, pad on the track
     ],
     props: [
       { type: 'forest', x: 0, y: 0, w: SW, h: 3 },
@@ -181,7 +181,7 @@ function sportsPark() {
       { type: 'sign', x: 27, y: 9, text: 'Tennis Court' },
       { type: 'sign', x: 44, y: 9, text: 'Football Field' },
       { type: 'sign', x: 7, y: 15, text: 'Basketball' },
-      { type: 'sign', x: 26, y: 15, text: 'Go-Kart Track' },
+      { type: 'sign', x: 30, y: 15, text: 'Go-Kart Track' },
       { type: 'sign', x: 36, y: 12, text: 'Sports Park' },
       { type: 'lantern', x: 18, y: 12 },
       { type: 'lantern', x: 34, y: 15 },
@@ -234,5 +234,5 @@ function grotto() {
 function seedRooms() {
   return [plaza(), dojo(), ramen(), sportsPark(), grotto()];
 }
-seedRooms.SEED_VERSION = 7;
+seedRooms.SEED_VERSION = 8;
 module.exports = seedRooms;
