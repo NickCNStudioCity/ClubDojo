@@ -24,6 +24,9 @@ const VILLAGE_POOL = [
   { id: 'emote5', text: 'Use 5 emotes', event: 'emote', goal: 5, coins: 25, xp: 10 },
   { id: 'chat3', text: 'Say something in chat 3 times', event: 'chat', goal: 3, coins: 25, xp: 10 },
   { id: 'bow', text: 'Bow to another ninja (emote 1)', event: 'emote', emote: 'bow', goal: 1, coins: 20, xp: 10 },
+  { id: 'climb', text: 'Climb from Mountain Town to the Peak', event: 'visit', rooms: ['mountain-town', 'mountain-peak'], goal: 2, coins: 35, xp: 15 },
+  { id: 'bell', text: 'Ring the Summit Bell', event: 'bell', goal: 1, coins: 30, xp: 15 },
+  { id: 'forage', text: 'Collect 3 mountain finds', event: 'find', goal: 3, coins: 40, xp: 20 },
 ];
 const FEATURED_REWARD = { coins: 50, xp: 25 };
 
@@ -60,6 +63,7 @@ function parse(json) {
     streak: s.streak || 0, bestStreak: s.bestStreak || 0, lastLogin: s.lastLogin || null,
     challengesDone: s.challengesDone || 0,
     daily: s.daily && typeof s.daily === 'object' ? s.daily : null,
+    mountain: s.mountain && typeof s.mountain === 'object' ? s.mountain : {}, // server/src/mountain.js
   };
 }
 

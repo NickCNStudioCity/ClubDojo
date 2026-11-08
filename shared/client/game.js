@@ -52,8 +52,9 @@
         if (state.pendingNpc) {
           const npc = state.pendingNpc;
           state.pendingNpc = null;
-          if (Math.max(Math.abs(npc.x - t.x), Math.abs(npc.y - t.y)) <= 2) openSensei(npc);
+          if (P.propDistance(npc, t.x, t.y) <= 2) openNpc(npc);
         }
+        mountain.arrived(t);
         if (state.pendingSpot) {
           const spot = (state.room.minigames || []).find((sp) => sp.id === state.pendingSpot);
           state.pendingSpot = null;
@@ -66,6 +67,13 @@
 
     // Minigames run in an overlay inside this window (shared/client/minigames/host.js).
     const minigames = window.ClubDojoMinigames.createHost({ root: win, conn, h, toast: (m, bad) => toast(m, bad), getMe: () => state.me });
+
+    // The world map and fast travel (shared/client/atlas.js).
+    const atlas = window.ClubDojoAtlas.create({
+      root: win, hud, conn, world, h, toast: (m, bad) => toast(m, bad), getMe: () => state.me,
+      staleGame: () => !minigames.isOpen(),
+      onOpen: () => { closeEmotes(); state.pendingPortal = false; state.pendingSpot = null; state.pendingNpc = null; },
+    });
 
     function toast(msg, bad) {
       const t = h('div', { class: `toast${bad ? ' bad' : ''}` }, msg);
@@ -87,8 +95,6 @@
     ui.exits = h('nav', { class: 'exits', 'aria-label': 'Exits from this room' });
     ui.chatLog = h('div', { class: 'chat-log', role: 'log', 'aria-label': 'Room chat messages' });
     ui.chatInput = h('input', { type: 'text', placeholder: 'Say something... (Enter)', 'aria-label': 'Chat message', maxlength: P.LIMITS.chatMax });
-    ui.minimap = h('canvas', { width: 400, height: 240 });
-    ui.minimapPanel = h('div', { class: 'panel minimap', hidden: true }, ui.minimap);
     ui.emotePop = h('div', { class: 'panel emote-pop', hidden: true, role: 'toolbar', 'aria-label': 'Emotes' },
       EMOTE_KEYS.map((k, i) => h('button', { title: k, onclick: () => { doEmote(k); ui.emotePop.hidden = true; } }, P.EMOTES[k], h('kbd', {}, String(i + 1)))));
     ui.chat = h('section', { class: 'panel chat', 'aria-label': 'Room chat' },
@@ -96,6 +102,9 @@
         h('button', { class: 'chat-toggle', onclick: () => { ui.chat.classList.toggle('collapsed'); } }, 'hide / show')),
       ui.chatLog,
       h('form', { class: 'chat-input', onsubmit: (e) => { e.preventDefault(); sendChat(); } }, ui.chatInput));
+
+    // Mountain Town and Peak: the day's card, the Guide, cocoa, the bell and finds.
+    const mountain = window.ClubDojoMountainUi.create({ h, conn, world, state, toasts, toast: (m, bad) => toast(m, bad), openModal: (...a) => openModal(...a), closeModal: () => closeModal(), confetti: (...a) => confetti(...a), showBanner: (...a) => showBanner(...a), chatLine: (...a) => chatLine(...a) });
 
     const menuItems = [
       ['Quests', openQuests, true], ['Ninja', openNinja], ['Inventory', openInventory], ['Shop', openShop],
@@ -108,9 +117,8 @@
         h('div', { class: 'xp', 'aria-hidden': 'true' }, ui.xpFill), ui.xpText),
       h('div', { class: 'panel room-tag', 'aria-label': 'Current room' }, ui.roomName, ui.online),
       h('div', { class: 'top-right' },
-        h('button', { class: 'panel minimap-btn', 'aria-label': 'Toggle mini map', onclick: () => { ui.minimapPanel.hidden = !ui.minimapPanel.hidden; drawMinimap(); } }, 'Map'),
+        h('button', { class: 'panel map-btn', title: 'World map (M)', 'aria-label': 'Open world map', onclick: () => atlas.open() }, h('span', { 'aria-hidden': 'true' }, '🗺️'), 'Map'),
         h('div', { class: 'panel coins', 'aria-label': 'Coins' }, ui.streak, h('span', { class: 'coin', 'aria-hidden': 'true' }), ui.coins)),
-      ui.minimapPanel,
       ui.exits,
       ui.quest = h('button', { class: 'panel quest', 'aria-label': 'Active quest. Open quest log.', onclick: openQuests },
         ui.questLabel = h('div', { class: 'label' }, 'Daily challenge'), ui.questTitle = h('b', {}, 'Earn your next belt'),
@@ -120,11 +128,13 @@
       ui.emotePop,
       h('nav', { class: 'panel menu', 'aria-label': 'Game menu' },
         menuItems.map(([label, fn, primary]) => h('button', { class: `btn${primary ? '' : ' alt'}`, onclick: fn }, label))),
+      mountain.panel,
     );
 
     function renderHud() {
       const me = state.me;
       if (!me) return;
+      mountain.update();
       const belt = P.beltById(me.belt);
       const next = P.nextBelt(me.belt);
       ui.sash.style.background = belt.color;
@@ -187,21 +197,6 @@
       return { left: '←', right: '→', up: '↑', down: '↓' }[World.portalEdge(state.room, p, 3)] || '⛩';
     }
 
-    function drawMinimap() {
-      if (ui.minimapPanel.hidden || !state.room) return;
-      const c = ui.minimap.getContext('2d');
-      const r = state.room;
-      const T = Math.min(ui.minimap.width / r.width, ui.minimap.height / r.height);
-      c.setTransform(1, 0, 0, 1, 0, 0);
-      c.clearRect(0, 0, ui.minimap.width, ui.minimap.height);
-      World.drawStatic(c, r, T);
-      for (const n of world.players.values()) {
-        c.fillStyle = n.id === state.me?.id ? '#e8453c' : '#2f6fd1';
-        c.beginPath(); c.arc(n.px * T, n.py * T, T * 0.7, 0, Math.PI * 2); c.fill();
-      }
-    }
-    setInterval(drawMinimap, 500);
-
     function chatLine(parts, cls) {
       const p = h('p', { class: cls || null }, parts);
       const atBottom = ui.chatLog.scrollTop + ui.chatLog.clientHeight >= ui.chatLog.scrollHeight - 8;
@@ -224,12 +219,13 @@
       let target = t;
       state.pendingSpot = null;
       state.pendingNpc = null;
-      const npc = World.npcAt(state.room, t.x, t.y);
+      const npc = World.interactAt(state.room, t.x, t.y);
       if (npc) {
         // Clicking Sensei walks up to him and opens his dialog on arrival.
         const me0 = world.players.get(state.me.id);
-        if (me0 && Math.max(Math.abs(npc.x - me0.x), Math.abs(npc.y - me0.y)) <= 2 && !me0.path.length) { openSensei(npc); return; }
-        const near = [[0, 1], [-1, 1], [1, 1], [0, 2], [-1, 0], [1, 0]].map(([dx, dy]) => ({ x: npc.x + dx, y: npc.y + dy }))
+        if (me0 && P.propDistance(npc, me0.x, me0.y) <= 2 && !me0.path.length) { openNpc(npc); return; }
+        const midX = npc.x + Math.floor((npc.w || 1) / 2), lowY = npc.y + (npc.h || 1) - 1;
+        const near = [[0, 1], [-1, 1], [1, 1], [0, 2], [-1, 0], [1, 0]].map(([dx, dy]) => ({ x: midX + dx, y: lowY + dy }))
           .find((c) => P.isWalkable(state.room, c.x, c.y) && !P.portalAt(state.room, c.x, c.y));
         if (near) { state.pendingNpc = npc; t = near; target = near; }
       }
@@ -251,7 +247,7 @@
       if (me && me.x === target.x && me.y === target.y && !me.path.length) {
         if (state.pendingPortal) { state.pendingPortal = false; conn.request('portal').catch((e) => toast(e.message, true)); }
         if (state.pendingSpot) { const id = state.pendingSpot; state.pendingSpot = null; minigames.join(id); }
-        if (state.pendingNpc) { const n = state.pendingNpc; state.pendingNpc = null; openSensei(n); }
+        if (state.pendingNpc) { const n = state.pendingNpc; state.pendingNpc = null; openNpc(n); }
         return;
       }
       const failed = (e) => { state.pendingPortal = false; state.pendingSpot = null; state.pendingNpc = null; world.showMarker(target, false); if (e.code === 'busy') toast(e.message, true); };
@@ -330,6 +326,8 @@
         ...belts,
         h('div', { class: 'foot' }, h('span', { class: 'muted' }, `${me.xp.toLocaleString()} XP · ${daily ? daily.challengesDone : 0} challenges completed`), h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
     }
+
+    function openNpc(npc) { if (!mountain.talk(npc)) openSensei(npc); }
 
     // Sensei Oru: belt tests.
     function openSensei(npc) {
@@ -451,6 +449,7 @@
     document.addEventListener('keydown', (e) => {
       if (state.phase !== 'game') return;
       if (minigames.isOpen()) return; // the minigame owns the keyboard
+      if (atlas.isOpen()) { atlas.key(e); return; }
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
       if (e.key === 'Escape') {
         if (modalOpen) { closeModal(); e.preventDefault(); return; }
@@ -461,6 +460,7 @@
       if (typing || modalOpen) return;
       if (!root.contains(e.target) && e.target !== document.body) return;
       if (e.key === 'Enter') { ui.chatInput.focus(); e.preventDefault(); }
+      if (e.key === 'm' || e.key === 'M') { atlas.open(); e.preventDefault(); return; }
       const n = Number(e.key);
       if (n >= 1 && n <= EMOTE_KEYS.length) doEmote(EMOTE_KEYS[n - 1]);
     });
@@ -468,12 +468,14 @@
     // ---------- server events ----------
     conn.on('room:enter', (m) => {
       state.room = m.room;
-      world.setRoom(m.room, m.players, m.you, { quiet: !!m.updated });
+      world.setRoom(m.room, m.players, m.you, { quiet: !!m.updated, held: atlas.traveling() });
+      atlas.roomChanged(m.room.id);
       state.pendingPortal = false;
       state.pendingNpc = null;
+      state.pendingSpot = null;
       renderRoomTag();
       renderExits();
-      drawMinimap();
+      mountain.update();
       if (m.updated) toast(`${m.room.name} was just updated by a Grandmaster`);
       else chatLine(`You entered ${m.room.name}.`, 'sys');
       showGame();
@@ -493,7 +495,7 @@
       chatLine(`📣 ${m.from}: ${m.text}`, 'ann');
     });
     conn.on('mg:spots', (m) => { if (state.room && m.roomId === state.room.id) world.spotStatus = m.spots; });
-    conn.on('presence', (m) => { state.online = m.online; renderRoomTag(); });
+    conn.on('presence', (m) => { state.online = m.online; renderRoomTag(); atlas.refresh(); });
     conn.on('you', (m) => {
       const before = state.me;
       state.me = m.ninja;
@@ -538,6 +540,7 @@
       hud.hidden = false;
       renderHud();
       renderRoomTag();
+      atlas.prefetch();
       emit('game', state);
     }
 
@@ -547,6 +550,7 @@
       hud.hidden = true;
       banner.hidden = true;
       closeModal();
+      atlas.reset();
       world.setRoom(null, [], null);
       ui.chatLog.replaceChildren();
       renderConnect(message);

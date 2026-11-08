@@ -7,7 +7,11 @@
   const EMOTE_MS = 2500;
   const TITLE_MS = 2600; // room name card after walking through a door
 
-  const COVERING_PROPS = new Set(['forest', 'mountains', 'building', 'wall', 'counter', 'table', 'tree', 'dummy', 'npc']);
+  const Art = window.ClubDojoMountainArt; // Mountain Town and Peak: tiles, props, sky and weather
+  const ART_THEMES = new Set(['alpine', 'summit']);
+  Art.registerAccessories(window.ClubDojoAvatar);
+
+  const COVERING_PROPS = new Set(['forest', 'mountains', 'building', 'wall', 'counter', 'table', 'tree', 'dummy', 'npc', ...Art.covering]);
 
   function hash(x, y) {
     let h = (x * 374761393 + y * 668265263) | 0;
@@ -41,10 +45,11 @@
     return covered;
   }
 
-  function drawTile(ctx, c, x, y, T, time, floor, covered) {
+  function drawTile(ctx, c, x, y, T, time, floor, covered, theme) {
     const px = x * T, py = y * T;
     const n = hash(x, y);
     if (c === '#' && covered) c = floor;
+    if (ART_THEMES.has(theme) && Art.tile(ctx, c, x, y, T, time, theme)) return;
     switch (c) {
       case '.':
         ctx.fillStyle = n > 0.85 ? '#eff7fb' : '#f4fafd';
@@ -145,9 +150,10 @@
   function drawTiles(ctx, room, T, time, cache) {
     const floor = cache ? cache.floor : floorOf(room);
     const covered = cache ? cache.covered : coverMap(room);
+    const theme = cache ? cache.theme : themeOf(room, floor);
     for (let y = 0; y < room.height; y++) {
       const row = room.tiles[y];
-      for (let x = 0; x < room.width; x++) drawTile(ctx, row[x], x, y, T, time, floor, covered.has(y * room.width + x));
+      for (let x = 0; x < room.width; x++) drawTile(ctx, row[x], x, y, T, time, floor, covered.has(y * room.width + x), theme);
     }
   }
 
@@ -168,6 +174,7 @@
     snow: { base: '#e3f0f6', dark: '#c9dfea', mid: '#d6e8f1', light: '#ffffff' },
     rock: { base: '#24212a', dark: '#1a181f', mid: '#33303a', light: '#423e4a' },
     indoor: { base: '#1c120e', dark: '#140c09', mid: '#2a1a13', light: '#3a2419' },
+    ...Art.SURROUND,
   };
 
   function drawSurroundings(ctx, room, T, time, view, theme, cache) {
@@ -181,7 +188,9 @@
         if (x >= 0 && y >= 0 && x < room.width && y < room.height) continue;
         const n = hash(x + 911, y + 377);
         const px = x * T, py = y * T;
-        if (theme === 'forest') {
+        if (ART_THEMES.has(theme)) {
+          Art.surroundTile(ctx, theme, x, y, T, n);
+        } else if (theme === 'forest') {
           if (n < 0.62) {
             const r = T * (0.55 + n * 0.5);
             ctx.fillStyle = c.dark;
@@ -223,7 +232,7 @@
       if (edge === 'right') for (let x = room.width; x < x1; x++) for (let j = 0; j < h; j++) run.push([x, p.y + j]);
       if (edge === 'up') for (let y = y0; y < 0; y++) for (let i = 0; i < w; i++) run.push([p.x + i, y]);
       if (edge === 'down') for (let y = room.height; y < y1; y++) for (let i = 0; i < w; i++) run.push([p.x + i, y]);
-      if (tile) for (const [x, y] of run) drawTile(ctx, tile, x, y, T, time, cache ? cache.floor : 'g', false);
+      if (tile) for (const [x, y] of run) drawTile(ctx, tile, x, y, T, time, cache ? cache.floor : 'g', false, theme);
       else {
         // Doorways out of a building: warm daylight spilling in from outside.
         const ex = edge === 'left' ? x0 * T : edge === 'right' ? room.width * T : p.x * T;
@@ -319,7 +328,7 @@
     return 'Afternoon';
   }
 
-  function drawLighting(ctx, room, T, time, view, light) {
+  function drawLighting(ctx, room, T, time, view, light, env) {
     const { x0, y0, x1, y1 } = view;
     const X = x0 * T, Y = y0 * T, W = (x1 - x0) * T, H = (y1 - y0) * T;
     if (light.warm > 0) { ctx.fillStyle = `rgba(255,150,70,${0.13 * light.warm})`; ctx.fillRect(X, Y, W, H); }
@@ -330,9 +339,9 @@
     const k = Math.min(1, light.dark / 0.5);
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    const glow = (gx, gy, r, a) => {
+    const glow = (gx, gy, r, a, rgb = '255,190,90') => {
       const g = ctx.createRadialGradient(gx, gy, 1, gx, gy, r);
-      g.addColorStop(0, `rgba(255,190,90,${a})`); g.addColorStop(1, 'rgba(255,190,90,0)');
+      g.addColorStop(0, `rgba(${rgb},${a})`); g.addColorStop(1, `rgba(${rgb},0)`);
       ctx.fillStyle = g;
       ctx.beginPath(); ctx.arc(gx, gy, r, 0, Math.PI * 2); ctx.fill();
     };
@@ -345,7 +354,7 @@
         glow(p.x * T + T * 1.45, p.y * T + T * 2.65, T * 1.6, 0.3 * k);
         glow(p.x * T + w - T * 1.45, p.y * T + T * 2.65, T * 1.6, 0.3 * k);
         glow(p.x * T + w / 2, (p.y + (p.h || 1)) * T, T * 2, 0.22 * k);
-      }
+      } else if (Art.props[p.type]) Art.glows(p, T, glow, k, time, env);
     }
     for (const sp of room.minigames || []) glow((sp.x + 1.5) * T, (sp.y + 1) * T, T * 2.2, 0.18 * k);
     ctx.restore();
@@ -359,16 +368,20 @@
     const room = world.room;
     const list = world.particles || (world.particles = []);
     const light = lightingFor(world.theme, world.hour());
-    const kind = world.theme === 'indoor' || world.theme === 'rock' ? 'dust' : world.theme === 'snow' ? 'snow' : light.night ? 'firefly' : 'leaf';
-    const max = kind === 'snow' ? 60 : kind === 'firefly' ? 34 : kind === 'dust' ? 26 : 22;
-    const rate = kind === 'snow' ? 14 : kind === 'leaf' ? 3 : 6;
+    const art = ART_THEMES.has(world.theme);
+    const kind = art ? 'snow' : world.theme === 'indoor' || world.theme === 'rock' ? 'dust' : world.theme === 'snow' ? 'snow' : light.night ? 'firefly' : 'leaf';
+    // In the mountains the snow follows the day's weather, and blows harder at the summit.
+    const summit = world.theme === 'summit', snowing = world.mountain && world.mountain.weather.id === 'snowfall';
+    const max = art ? (snowing ? 130 : summit ? 55 : 22) : kind === 'snow' ? 60 : kind === 'firefly' ? 34 : kind === 'dust' ? 26 : 22;
+    const rate = art ? (snowing ? 26 : summit ? 12 : 3) : kind === 'snow' ? 14 : kind === 'leaf' ? 3 : 6;
+    const wind = summit ? 1.6 : 0;
     world.spawnAcc = (world.spawnAcc || 0) + dt * rate;
     while (world.spawnAcc >= 1) {
       world.spawnAcc -= 1;
       if (list.length >= max) break;
       const r = Math.random;
       if (kind === 'leaf' || kind === 'snow') {
-        list.push({ kind, x: r() * (room.width + 6) - 6, y: -1 - r() * 2, vx: 0.5 + r() * 0.6, vy: kind === 'snow' ? 0.9 + r() * 0.8 : 0.7 + r() * 0.6,
+        list.push({ kind, x: r() * (room.width + 6) - 6, y: -1 - r() * 2, vx: 0.5 + r() * 0.6 + wind, vy: kind === 'snow' ? 0.9 + r() * 0.8 : 0.7 + r() * 0.6,
           spin: r() * Math.PI * 2, vs: (r() - 0.5) * 5, c: LEAF_COLORS[Math.floor(r() * LEAF_COLORS.length)], size: 0.12 + r() * 0.1, life: 0, max: 30 });
       } else {
         list.push({ kind, x: r() * room.width, y: 3 + r() * (room.height - 3), vx: (r() - 0.5) * 0.4, vy: kind === 'dust' ? -0.05 - r() * 0.1 : (r() - 0.5) * 0.4,
@@ -554,8 +567,12 @@
   }
 
   // Props: each returns its depth (bottom edge in tile units) and a draw function.
-  function propDrawable(p, T, time) {
+  function propDrawable(p, T, time, env = {}) {
     const x = p.x * T, y = p.y * T, w = (p.w || 1) * T, h = (p.h || 1) * T;
+    if (Art.props[p.type]) {
+      const depth = p.depth ?? (Art.flat.has(p.type) ? -1 : p.y + (p.h || 1));
+      return { depth, draw: (ctx) => Art.props[p.type](ctx, p, x, y, w, h, T, time, env) };
+    }
     const depth = p.type === 'mountains' || p.type === 'forest' || p.type === 'wall' || p.type === 'court' || p.type === 'track' ? -1 : p.y + (p.h || 1);
     const draw = {
       building(ctx) {
@@ -696,8 +713,8 @@
       court(ctx) { drawCourt(ctx, p, x, y, w, h, T); },
       track(ctx) { drawKartTrack(ctx, x, y, w, h, T); },
       npc(ctx) {
-        drawNinja(ctx, { x: p.x + 0.5, y: p.y + 0.5, color: '#f3f8fb', headband: '#f5b82e', belt: 'black' }, T, time);
-        drawLabel(ctx, p.name || 'Sensei', x + T / 2, y + T * 0.75, T, { bg: 'rgba(122,59,46,.85)' });
+        drawNinja(ctx, { x: p.x + 0.5, y: p.y + 0.5, color: p.gi || '#f3f8fb', headband: p.headband || '#f5b82e', belt: p.belt || 'black', accessories: p.hat ? { head: 'fur-hat' } : undefined }, T, time);
+        drawLabel(ctx, p.name || 'Sensei', x + T / 2, y + T * 0.75, T, { bg: p.npc ? 'rgba(47,109,140,.9)' : 'rgba(122,59,46,.85)' });
       },
       dummy(ctx) {
         const cx = x + T / 2;
@@ -895,7 +912,7 @@
     onMouse(e) {
       this.hover = this.tileFromEvent(e);
       const portal = this.hover && P.portalAt(this.room, this.hover.x, this.hover.y);
-      const spot = this.hover && (P.spotAt(this.room, this.hover.x, this.hover.y) || World.npcAt(this.room, this.hover.x, this.hover.y));
+      const spot = this.hover && (P.spotAt(this.room, this.hover.x, this.hover.y) || World.interactAt(this.room, this.hover.x, this.hover.y));
       this.canvas.style.cursor = portal || spot ? 'pointer' : this.hover && P.isWalkable(this.room, this.hover.x, this.hover.y) ? 'crosshair' : 'default';
     }
 
@@ -926,10 +943,17 @@
       this.marker = null;
       this.cache = room ? { floor: floorOf(room), covered: coverMap(room) } : null;
       this.theme = room ? themeOf(room, this.cache.floor) : 'forest';
+      if (this.cache) this.cache.theme = this.theme;
+      this.springs = room ? (room.props || []).filter((p) => p.type === 'hotspring') : [];
       this.particles = [];
-      if (!opts.quiet) this.enteredAt = performance.now();
+      // A map trip holds the fade and title until the map lifts (see reveal).
+      if (opts.held) this.enteredAt = -1e9;
+      else if (!opts.quiet) { this.enteredAt = performance.now(); this.skipFade = false; }
       this.layout();
     }
+
+    // Show the room title now, without the fade from black: the map is what is fading away.
+    reveal() { this.enteredAt = performance.now(); this.skipFade = true; }
 
     // Hour of day used for lighting. Tests and screenshots can pin it with world.hourOverride.
     hour() {
@@ -944,7 +968,7 @@
     removePlayer(id) { this.players.delete(id); }
     updateLook(p) {
       const n = this.players.get(p.id);
-      if (n) Object.assign(n, { name: p.name, color: p.color, headband: p.headband, belt: p.belt, role: p.role });
+      if (n) Object.assign(n, { name: p.name, color: p.color, headband: p.headband, belt: p.belt, role: p.role, accessories: p.accessories });
     }
     movePlayer(id, from, to) {
       const n = this.players.get(id);
@@ -962,6 +986,11 @@
     emote(id, emote) {
       const n = this.players.get(id);
       if (n) n.emote = { glyph: P.EMOTES[emote] || '❔', at: performance.now() };
+    }
+    // A small number or icon that rises off a ninja's head.
+    floatText(id, text) {
+      const n = this.players.get(id);
+      if (n) n.float = { text, at: performance.now() };
     }
     showMarker(t, ok) { this.marker = { ...t, ok, at: performance.now() }; }
 
@@ -990,7 +1019,9 @@
 
     update(dt) {
       for (const n of this.players.values()) {
-        let budget = WALK_SPEED * dt;
+        // The frozen lake at the summit is quicker to cross than snow.
+        const onIce = this.theme === 'summit' && this.room && P.tileAt(this.room, Math.floor(n.px), Math.floor(n.py)) === '*';
+        let budget = WALK_SPEED * dt * (onIce ? 1.8 : 1);
         n.walking = n.path.length > 0;
         while (budget > 0 && n.path.length) {
           const t = n.path[0];
@@ -1019,6 +1050,13 @@
       if (!room) return;
       const T = this.T;
       const dpr = this.dpr || 1;
+      const light = lightingFor(this.theme, this.hour());
+      const mt = this.mountain;
+      const env = {
+        hour: this.hour(), night: Math.min(1, light.dark / 0.5), warm: light.warm,
+        weather: mt && mt.weather.id, beacon: mt && mt.beacon.lit, beaconRings: mt && mt.beacon.rings, beaconGoal: mt && mt.beacon.goal,
+        bellAt: this.bellAt, bellRung: mt && mt.bell.rung,
+      };
       ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, this.oy * dpr);
 
       // Visible tile range, including the margin around the room.
@@ -1052,8 +1090,11 @@
       // Depth-sorted props and ninjas
       const drawables = [];
       for (const p of room.props || []) {
-        const d = propDrawable(p, T, now);
+        const d = propDrawable(p, T, now, env);
         if (d) drawables.push(d);
+      }
+      if (mt && ART_THEMES.has(this.theme)) {
+        for (const f of mt.finds) if (f.room === room.id) drawables.push({ depth: f.y + 0.7, draw: (c) => Art.drawWorldFind(c, f, T, now) });
       }
       for (const sp of room.minigames || []) drawables.push(spotDrawable(sp, T, now, (this.spotStatus || {})[sp.id]));
       for (const n of this.players.values()) {
@@ -1062,6 +1103,7 @@
           draw: (c) => {
             const pos = drawNinja(c, { ...n, x: n.px, y: n.py }, T, now, { you: n.id === this.youId });
             n._top = pos.top;
+            if (this.springs.some((p) => n.px >= p.x + 0.3 && n.px <= p.x + (p.w || 1) - 0.3 && n.py >= p.y + 0.3 && n.py <= p.y + (p.h || 1) - 0.1)) Art.drawSoak(c, pos.cx, pos.feet, T, now);
             const star = n.role === 'grandmaster' ? '★ ' : n.role === 'sensei' ? '☆ ' : '';
             drawLabel(c, star + n.name, pos.cx, pos.feet + T * 0.15, T, { bg: n.id === this.youId ? 'rgba(47,111,209,.85)' : 'rgba(0,0,0,.5)' });
           },
@@ -1071,8 +1113,8 @@
       for (const d of drawables) d.draw(ctx);
 
       // Time of day, then lights and ambient particles on top of the scene.
-      const light = lightingFor(this.theme, this.hour());
-      drawLighting(ctx, room, T, now, view, light);
+      drawLighting(ctx, room, T, now, view, light, env);
+      if (ART_THEMES.has(this.theme)) Art.overlay(ctx, room, T, now, view, env, this.springs);
       drawParticles(ctx, this.particles, T, now, light);
 
       // Overlays above everything: exit signs, door labels, bubbles, emotes
@@ -1081,9 +1123,9 @@
         if (edge && p !== hoverPortal) drawExitSign(ctx, p, edge, T, now, false);
       }
       const hoverSpot = this.hover && P.spotAt(room, this.hover.x, this.hover.y);
-      const hoverNpc = this.hover && World.npcAt(room, this.hover.x, this.hover.y);
+      const hoverNpc = this.hover && World.interactAt(room, this.hover.x, this.hover.y);
       if (hoverSpot) drawLabel(ctx, `Play ${hoverSpot.name || hoverSpot.game}`, (hoverSpot.x + P.MINIGAME_SPOT.w / 2) * T, hoverSpot.y * T - T * 1.7, T, { bg: 'rgba(245,184,46,.95)', color: '#1b2a36' });
-      if (hoverNpc) drawLabel(ctx, `Talk to ${hoverNpc.name || 'Sensei'}`, (hoverNpc.x + 0.5) * T, hoverNpc.y * T - T * 1.9, T, { bg: 'rgba(245,184,46,.95)', color: '#1b2a36' });
+      if (hoverNpc) drawLabel(ctx, hoverNpc.hover || `Talk to ${hoverNpc.name || 'Sensei'}`, (hoverNpc.x + (hoverNpc.w || 1) / 2) * T, hoverNpc.y * T - T * 1.9, T, { bg: 'rgba(245,184,46,.95)', color: '#1b2a36' });
       if (hoverPortal) {
         const edge = portalEdge(room, hoverPortal, SIGN_SLACK);
         if (edge) drawExitSign(ctx, hoverPortal, edge, T, now, true);
@@ -1092,6 +1134,21 @@
       for (const n of this.players.values()) {
         const cx = n.px * T;
         let top = (n._top ?? n.py * T - T) - T * 0.25;
+        if (n.float) {
+          const age = now - n.float.at;
+          if (age > 1500) n.float = null;
+          else {
+            ctx.font = `800 ${Math.max(13, T * 0.62)}px Nunito, "Segoe UI", sans-serif`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+            ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(3, T * 0.14); ctx.strokeStyle = 'rgba(20,32,44,.85)';
+            ctx.globalAlpha = Math.min(1, (1500 - age) / 400);
+            const fy = top - (age / 1500) * T * 1.4;
+            ctx.strokeText(n.float.text, cx, fy);
+            ctx.fillStyle = '#ffd54f';
+            ctx.fillText(n.float.text, cx, fy);
+            ctx.globalAlpha = 1;
+          }
+        }
         if (n.emote) {
           const age = now - n.emote.at;
           if (age > EMOTE_MS) n.emote = null;
@@ -1123,7 +1180,7 @@
       ctx.fillStyle = vg;
       ctx.fillRect(0, 0, vw, vh);
       const age = now - (this.enteredAt || -1e9);
-      if (age < 450) {
+      if (age < 450 && !this.skipFade) {
         ctx.fillStyle = `rgba(10,16,24,${1 - age / 450})`;
         ctx.fillRect(0, 0, vw, vh);
       }
@@ -1142,7 +1199,7 @@
         ctx.fillStyle = '#ffffff';
         ctx.fillText(title, vw / 2, ty);
         ctx.font = `700 ${Math.round(size * 0.28)}px Nunito, "Segoe UI", sans-serif`;
-        const sub = timeOfDayName(this.hour(), this.theme);
+        const sub = ART_THEMES.has(this.theme) && mt ? mt.weather.name : timeOfDayName(this.hour(), this.theme);
         ctx.lineWidth = size * 0.07;
         ctx.strokeText(sub, vw / 2, ty + size * 0.62);
         ctx.fillStyle = '#f5b82e';
@@ -1195,6 +1252,10 @@
   World.drawNinja = drawNinja;
   // The NPC standing on a tile (Sensei Oru in the Main Dojo), or null.
   World.portalEdge = portalEdge;
+  // Anything on a tile you can walk up to and use: an NPC, or a prop such as the Summit Bell.
+  World.interactAt = function (room, x, y) {
+    return World.npcAt(room, x, y) || (room && room.props || []).find((p) => p.interact && x >= p.x && x < p.x + (p.w || 1) && y >= p.y && y < p.y + (p.h || 1)) || null;
+  };
   World.npcAt = function (room, x, y) {
     return (room && room.props || []).find((p) => p.type === 'npc' && p.x === x && p.y === y) || null;
   };

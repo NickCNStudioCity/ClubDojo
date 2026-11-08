@@ -56,6 +56,12 @@
   function spotAt(room, x, y) {
     return (room.minigames || []).find((s) => x >= s.x && x < s.x + MINIGAME_SPOT.w && y >= s.y && y < s.y + MINIGAME_SPOT.h) || null;
   }
+  // Tiles between (x, y) and the nearest part of a prop's footprint, counting diagonals as one.
+  function propDistance(p, x, y) {
+    const dx = Math.max(p.x - x, 0, x - (p.x + (p.w || 1) - 1));
+    const dy = Math.max(p.y - y, 0, y - (p.y + (p.h || 1) - 1));
+    return Math.max(dx, dy);
+  }
   function spotPad(spot) {
     return { x: spot.x + Math.floor(MINIGAME_SPOT.w / 2), y: spot.y + MINIGAME_SPOT.h };
   }
@@ -143,6 +149,6 @@
   return {
     PROTOCOL_VERSION, DEFAULT_PORT, DISCOVERY_PORT, TILES, ROLES, BELTS, NINJA_COLORS, EMOTES, LIMITS,
     MINIGAME_SPOT, MINIGAME_PHASES, ACCESSORY_SLOTS,
-    beltById, nextBelt, tileAt, isWalkable, portalAt, findPath, spotAt, spotPad, spotKey, loadoutFromNinja,
+    beltById, nextBelt, tileAt, isWalkable, portalAt, findPath, propDistance, spotAt, spotPad, spotKey, loadoutFromNinja,
   };
 });
