@@ -145,7 +145,7 @@ module.exports = {
       ctx.cancel(timeTimer);
       ctx.cancel(finalTimer);
       ctx.cancel(endTimer);
-      ctx.end(ctx.players.map((p) => ({ id: p.id, score: byId.get(p.id) ? byId.get(p.id).points : 0 })));
+      ctx.end(ctx.players.map((p) => ({ id: p.id, score: byId.get(p.id) ? byId.get(p.id).points : 0 })), { endingMs: 0 }); // the standings already held on screen
     }
 
     // The horn: shots still in the air count, then the standings hold on screen before the results.

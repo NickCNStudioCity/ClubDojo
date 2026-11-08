@@ -4,6 +4,7 @@
 // Server rules: server/src/minigames/games/football.js
 ClubDojoMinigames.register({
   id: 'football',
+  ownEnding: true, // the last kick and final standings play out before the results
   guide: {
     summary: 'Lantern Kicks: field goals in turns. Everyone gets five kicks, and the last one counts double. Solo games add a bot to beat.',
     controls: [['↑ ↓ or W / S', 'Set the distance on your turn'], ['Space or Enter', 'Start the swing, lock your aim, then lock your power'], ['G', 'Read your Gust Scroll while someone else kicks']],

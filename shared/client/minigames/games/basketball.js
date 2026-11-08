@@ -5,6 +5,12 @@
 // for Shadow Clones. Mouse: hold on the court to shoot. Touch: the on-screen buttons, or hold the court.
 ClubDojoMinigames.register({
   id: 'basketball',
+  ownEnding: true, // the standings hold on screen after the buzzer
+  guide: {
+    summary: 'Four courts, one for each ninja, with bots on any empty ones. Score the most before the buzzer.',
+    controls: [['A / D or ← →', 'Move along your court'], ['Hold Space or Enter', 'Jump, then let go in the gold to shoot'], ['E or Shift', 'Shadow Clones, when your chi bar is full'], ['Mouse or touch', 'Hold the court to shoot, or use the on-screen buttons']],
+    tips: ['Longer shots hold longer and have tighter windows, but score 3 from outside the arc and 4 from deep.', 'Shoot from the hot spot for a bonus. A perfect shot in the paint is a dunk.', 'Clean makes fill your chi. Shadow Clones widen your windows and double your points, and the last 10 seconds count double too.', 'Every 4th make in a row throws a smoke bomb at the top rival.'],
+  },
 
   mount(ctx) {
     const { h, el, avatar } = ctx;

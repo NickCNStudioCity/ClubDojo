@@ -6,12 +6,19 @@
 // and personal best (browser storage, cosmetic only) give each run something extra to chase.
 ClubDojoMinigames.register({
   id: 'cart-surfer',
+  ownEnding: true,
+  guide: {
+    summary: 'Ride the mine cart as far as you can. You have three carts, and every crash costs one.',
+    controls: [['← → or A / D', 'Switch rails'], ['↑, W or Space', 'Jump over a boulder'], ['↓ or S', 'Duck under a low beam'], ['Touch', 'Swipe in any direction, or use the buttons']],
+    tips: ['Coins in a row build your multiplier, and a crash resets it.', 'A magnet pulls in coins from every rail. A lantern shield takes one crash for you.', 'It keeps getting faster, so look ahead and pick your rail early.'],
+  },
 
   mount(ctx) {
     const { h, el } = ctx;
     const P = ctx.protocol || window.ClubDojoProtocol;
-    const W = 800;
+    let W = 800; // logical width follows the screen's shape; the height stays fixed
     const H = 450;
+    let scale = 1;
     const HZ = H * 0.3; // horizon: the far end of the tunnel
     const CAMH = H * 0.62; // camera height in pixels; the floor at depth 0 sits at HZ + CAMH
     const FOCAL = 170; // perspective strength
@@ -23,7 +30,7 @@ ClubDojoMinigames.register({
     const RAIL = 26; // half the gap between the two rails of a lane
     const BEAM_GAP = 110; // wooden support frames along the tunnel
     const SLEEP_GAP = 40; // sleepers on the track
-    const DISTANCE_PER_POINT = 50; // matches the server's scoring
+    const DISTANCE_PER_POINT = 100; // matches the server's scoring
     const STREAK_STEP = 8; // matches the server's multiplier steps
     const JUMP_H = 88; // how high a jump lifts the cart
     const FOG = [10, 9, 16];
@@ -37,10 +44,20 @@ ClubDojoMinigames.register({
       return [W / 2 + (X - camX) * sc, HZ + (CAMH - Y) * sc];
     };
     const fogAt = (d) => Math.max(0, Math.min(1, d / VIEW)) ** 1.3 * 0.92;
+    // Fog colours are worked out once per colour and fog step, not for every shape on every frame.
+    const shadeCache = new Map();
     const shade = (rgb, d, lit = 0) => {
-      const f = fogAt(d);
-      const c = rgb.map((v, i) => Math.round(Math.min(255, v * (1 + lit)) * (1 - f) + FOG[i] * f));
-      return `rgb(${c[0]},${c[1]},${c[2]})`;
+      const step = Math.round(fogAt(d) * 40);
+      const key = (((rgb[0] | 0) << 16) | ((rgb[1] | 0) << 8) | (rgb[2] | 0)) * 1024 + step * 8 + Math.round(lit * 10);
+      let out = shadeCache.get(key);
+      if (!out) {
+        const f = step / 40;
+        const c = rgb.map((v, i) => Math.round(Math.min(255, v * (1 + lit)) * (1 - f) + FOG[i] * f));
+        out = `rgb(${c[0]},${c[1]},${c[2]})`;
+        if (shadeCache.size > 6000) shadeCache.clear();
+        shadeCache.set(key, out);
+      }
+      return out;
     };
     const hash = (n) => { let x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 
@@ -82,14 +99,15 @@ ClubDojoMinigames.register({
     }
 
     const style = h('style', {}, `
-      .cs { display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; padding: 8px; box-sizing: border-box; }
-      .cs-canvas { width: 100%; max-width: 800px; height: auto; aspect-ratio: 800 / 450; border-radius: 14px; user-select: none; touch-action: none; background: #0b0a12; box-shadow: 0 10px 30px rgba(0,0,0,.35); }
-      .cs-touch { display: flex; gap: 10px; }
+      .cs { position: absolute; inset: 0; overflow: hidden; background: #0b0a12; }
+      .cs-canvas { user-select: none; touch-action: none; }
+      .cs-info { position: absolute; left: 1.5%; top: 28%; max-width: 30%; display: flex; flex-direction: column; gap: 4px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.9); pointer-events: none; z-index: 1; }
+      .cs-touch { position: absolute; right: 12px; bottom: 34px; display: flex; gap: 10px; z-index: 1; }
       .cs-touch .btn { min-width: 64px; font-size: 20px; }
-      .cs-status { font-family: var(--display); font-size: 18px; min-height: 24px; text-align: center; }
-      .cs-mission { font-size: 13px; opacity: .85; text-align: center; }
+      @media (hover: hover) and (pointer: fine) { .cs-touch { display: none; } }
+      .cs-status { font-family: var(--display); font-size: 18px; }
+      .cs-mission { font-size: 13px; opacity: .9; }
       .cs-mission b { color: #ffd23f; }
-      .cs-keys { font-size: 12px; opacity: .6; text-align: center; }
     `);
 
     const canvas = h('canvas', { class: 'cs-canvas', width: W, height: H });
@@ -97,11 +115,34 @@ ClubDojoMinigames.register({
     const missionEl = h('div', { class: 'cs-mission' });
     const btn = (label, title, fn) => h('button', { class: 'btn', title, onclick: fn }, label);
     el.append(style, h('div', { class: 'cs' },
-      canvas, status, missionEl,
+      canvas, h('div', { class: 'cs-info' }, status, missionEl),
       h('div', { class: 'cs-touch' },
-        btn('◀', 'Left rail', () => move(-1)), btn('▲', 'Jump', jump), btn('▼', 'Duck', duck), btn('▶', 'Right rail', () => move(1))),
-      h('div', { class: 'cs-keys' }, '← → switch rails · ↑ or Space jump boulders · ↓ duck under beams · or swipe')));
-    const g = canvas.getContext('2d');
+        btn('◀', 'Left rail', () => move(-1)), btn('▲', 'Jump', jump), btn('▼', 'Duck', duck), btn('▶', 'Right rail', () => move(1)))));
+    const g = canvas.getContext('2d', { alpha: false }); // the tunnel is opaque, so the browser can skip blending it
+
+    // Glows are painted once and stamped, which is far cheaper than new gradients every frame.
+    function makeGlow(stops) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 128;
+      const x = c.getContext('2d');
+      const gr = x.createRadialGradient(64, 64, 1, 64, 64, 64);
+      for (const [at, col] of stops) gr.addColorStop(at, col);
+      x.fillStyle = gr;
+      x.fillRect(0, 0, 128, 128);
+      return c;
+    }
+    const lampGlow = makeGlow([[0, 'rgba(255,190,90,1)'], [0.35, 'rgba(255,150,60,.3)'], [1, 'rgba(255,130,40,0)']]);
+    const floorGlow = makeGlow([[0, 'rgba(255,170,80,1)'], [1, 'rgba(255,170,80,0)']]);
+    const railShine = g.createLinearGradient(0, H, 0, HZ);
+    railShine.addColorStop(0, '#e8eef4');
+    railShine.addColorStop(1, 'rgba(160,170,190,0.05)');
+    let farDark = null;
+    ctx.fit(canvas, 800, H, (f) => {
+      W = f.w; scale = f.scale;
+      farDark = g.createRadialGradient(W / 2, HZ, 4, W / 2, HZ, 190);
+      farDark.addColorStop(0, 'rgba(4,4,10,0.95)');
+      farDark.addColorStop(1, 'rgba(4,4,10,0)');
+    }, { fixedHeight: true, minW: 560, maxScale: 1.25 });
 
     const loadouts = new Map(ctx.players.map((p) => [String(p.id), p.loadout]));
     const names = new Map(ctx.players.map((p) => [String(p.id), p.name]));
@@ -133,8 +174,9 @@ ClubDojoMinigames.register({
     let raf = 0;
     let unmounted = false;
     let lastFrame = performance.now();
-    let speedEst = 0;
-    let lastY = 0;
+    let lanePredictUntil = 0; // your own rail changes show at once; server updates can't undo them until this time
+    let itemStart = 0; // track items behind the camera are skipped
+    let missionKey = '';
     const myY = () => (shown[meKey] ? shown[meKey].y : 0);
 
     function updateMission() {
@@ -146,6 +188,9 @@ ClubDojoMinigames.register({
         popup('Mission complete!', '#7dffb0', W / 2, 250, true);
       }
       const v = Math.min(mission.n, missionValue());
+      const key = `${missionDone}|${mission.label}|${v}|${store.best}`;
+      if (key === missionKey) return; // only touch the page when the text changes
+      missionKey = key;
       missionEl.replaceChildren(
         h('span', {}, missionDone ? '✔ ' : 'Mission: '), h('b', {}, mission.label), missionDone ? '' : ` (${v}/${mission.n})`,
         h('span', {}, ` · Rank: ${rankName()}`),
@@ -157,6 +202,8 @@ ClubDojoMinigames.register({
     function canAct() { return !over && !out && track && !(players[meKey] && players[meKey].finished); }
     function move(dir) {
       if (!canAct()) return;
+      const st = players[meKey];
+      if (st) { st.lane = Math.max(-1, Math.min(1, st.lane + dir)); lanePredictUntil = performance.now() + 180; }
       ctx.send({ type: 'move', dir });
     }
     function jump() {
@@ -201,12 +248,13 @@ ClubDojoMinigames.register({
       return Math.sin(Math.PI * p) * JUMP_H;
     };
 
-    // Server snapshot: id -> [lane, y, finished, stunned, coins, lives, pose, mult, shield, magnet tenths]
+    // Server snapshot: id -> [lane, y, finished, stunned, coins, lives, pose, mult, shield, magnet tenths, speed]
     function applyPlayers(snapshot) {
       const now = performance.now();
       for (const id of Object.keys(snapshot)) {
-        const [lane, y, finished, stunned, coins, lives, pose = 0, mult = 1, shield = 0, magnet = 0] = snapshot[id];
-        players[id] = { lane, y, finished: !!finished, stunned: !!stunned, coins, lives, pose, mult, shield: !!shield, magnet };
+        const [srvLane, y, finished, stunned, coins, lives, pose = 0, mult = 1, shield = 0, magnet = 0, v = 0] = snapshot[id];
+        const lane = id === meKey && players[id] && now < lanePredictUntil ? players[id].lane : srvLane;
+        players[id] = { lane, y, finished: !!finished, stunned: !!stunned, coins, lives, pose, mult, shield: !!shield, magnet, v, at: now };
         const o = shown[id];
         if (o && pose !== o.lastPose) { // pose changes start the animation for riders we did not predict
           if (pose === 1 && !airborne(o, now)) o.airStart = now;
@@ -284,21 +332,13 @@ ClubDojoMinigames.register({
       const [lx, ly] = project(side * (WALL - 70), 262, d);
       const k = flick(j, t) * (1 - fogAt(d) * 0.75);
       const r = 230 * sc;
-      const grd = g.createRadialGradient(lx, ly, 2, lx, ly, r);
-      grd.addColorStop(0, `rgba(255,190,90,${0.4 * k})`);
-      grd.addColorStop(0.35, `rgba(255,150,60,${0.12 * k})`);
-      grd.addColorStop(1, 'rgba(255,130,40,0)');
-      g.fillStyle = grd;
-      g.fillRect(lx - r, ly - r, r * 2, r * 2);
+      g.globalAlpha = 0.4 * k;
+      g.drawImage(lampGlow, lx - r, ly - r, r * 2, r * 2);
       // warm pool on the floor below
       const [fx, fy] = project(side * (WALL - 130), 0, d);
       const pr = 200 * sc;
-      const pool = g.createRadialGradient(fx, fy, 2, fx, fy, pr);
-      pool.addColorStop(0, `rgba(255,170,80,${0.22 * k})`);
-      pool.addColorStop(1, 'rgba(255,170,80,0)');
-      g.save(); g.translate(fx, fy); g.scale(1, 0.32); g.translate(-fx, -fy);
-      g.fillStyle = pool; g.fillRect(fx - pr, fy - pr, pr * 2, pr * 2);
-      g.restore();
+      g.globalAlpha = 0.22 * k;
+      g.drawImage(floorGlow, fx - pr, fy - pr * 0.32, pr * 2, pr * 0.64);
     }
 
     // Crystals and ore veins on the walls; fixed per stretch of tunnel so they scroll past.
@@ -372,6 +412,7 @@ ClubDojoMinigames.register({
       // sleepers, scrolling toward you
       for (let j = Math.ceil((camY + far) / SLEEP_GAP); j * SLEEP_GAP - camY >= near; j--) {
         const d = j * SLEEP_GAP - camY;
+        if (d > 380 && j % 2) continue; // far sleepers are a few pixels tall: draw half of them
         for (const lane of [-1, 0, 1]) {
           poly([project(lane * LANE_X - 50, 0, d), project(lane * LANE_X + 50, 0, d), project(lane * LANE_X + 50, 0, d + 11), project(lane * LANE_X - 50, 0, d + 11)], shade([96, 66, 40], d));
         }
@@ -382,10 +423,7 @@ ClubDojoMinigames.register({
         for (const off of [-RAIL, RAIL]) {
           const X = lane * LANE_X + off;
           poly([project(X - 5, 0, near), project(X + 5, 0, near), project(X + 2, 0, far), project(X - 2, 0, far)], '#3b3f48');
-          const grd = g.createLinearGradient(0, H, 0, HZ);
-          grd.addColorStop(0, '#e8eef4');
-          grd.addColorStop(1, 'rgba(160,170,190,0.05)');
-          poly([project(X - 2, 0.5, near), project(X + 2, 0.5, near), project(X + 0.6, 0.5, far), project(X - 0.6, 0.5, far)], grd);
+          poly([project(X - 2, 0.5, near), project(X + 2, 0.5, near), project(X + 0.6, 0.5, far), project(X - 0.6, 0.5, far)], railShine);
         }
       }
 
@@ -400,10 +438,7 @@ ClubDojoMinigames.register({
       g.restore();
 
       // the far end of the tunnel falls into shadow
-      const dark = g.createRadialGradient(W / 2, HZ, 4, W / 2, HZ, 190);
-      dark.addColorStop(0, 'rgba(4,4,10,0.95)');
-      dark.addColorStop(1, 'rgba(4,4,10,0)');
-      g.fillStyle = dark;
+      g.fillStyle = farDark;
       g.fillRect(0, 0, W, H);
     }
 
@@ -907,27 +942,28 @@ ClubDojoMinigames.register({
       const now = performance.now();
       const dt = Math.min(64, now - lastFrame);
       lastFrame = now;
-      // smooth the server's 10 updates a second into motion on screen
+      g.setTransform(scale, 0, 0, scale, 0, 0);
+      // Carts keep rolling at their last known speed between server updates, and ease toward where
+      // the server says they should be, so the camera moves smoothly at any frame rate.
+      const laneEase = 1 - Math.exp(-dt / 55), posEase = 1 - Math.exp(-dt / 140);
       for (const id of Object.keys(players)) {
         const target = players[id];
         const cur = shown[id];
-        if (!cur || Math.abs(cur.y - target.y) > 300) shown[id] = { lane: target.lane, y: target.y, airStart: 0, duckUntil: 0, lastPose: target.pose };
+        if (!cur || Math.abs(cur.y - target.y) > 400) shown[id] = { lane: target.lane, y: target.y, airStart: 0, duckUntil: 0, lastPose: target.pose };
         else {
-          cur.lane += (target.lane - cur.lane) * 0.25;
-          cur.y += (target.y - cur.y) * 0.35;
+          const end = track ? track.length : Infinity;
+          const expected = Math.min(end, target.y + (target.v * Math.min(140, now - target.at)) / 1000);
+          cur.lane += (target.lane - cur.lane) * laneEase;
+          cur.y = Math.min(end, cur.y + (target.v * dt) / 1000);
+          cur.y += (expected - cur.y) * posEase;
         }
       }
       for (const id of Object.keys(shown)) if (!players[id]) delete shown[id];
 
       const me = shown[meKey];
       const camY = me ? me.y : 0;
-      if (me) {
-        const dy = (me.y - lastY) / Math.max(1, dt) * 1000;
-        speedEst += (Math.max(0, dy) - speedEst) * 0.08;
-        lastY = me.y;
-        camX += (me.lane * LANE_X * 0.35 - camX) * 0.12;
-      }
-      const speed = Math.min(1, speedEst / 260);
+      if (me) camX += (me.lane * LANE_X * 0.35 - camX) * (1 - Math.exp(-dt / 120));
+      const speed = Math.min(1, (players[meKey] ? players[meKey].v : 0) / 420);
       const lean = me && players[meKey] ? Math.max(-1, Math.min(1, (players[meKey].lane - me.lane) * 2)) : 0;
 
       g.save();
@@ -940,10 +976,13 @@ ClubDojoMinigames.register({
       if (track) {
         const fd = track.length - camY;
         if (fd > -30 && fd < VIEW) list.push({ d: fd, draw: () => drawFinishLine(fd) });
-        for (const item of track.items) {
-          if (got.has(item.n)) continue;
+        const items = track.items;
+        while (itemStart < items.length && items[itemStart].y - camY < -20) itemStart++;
+        for (let i = itemStart; i < items.length; i++) {
+          const item = items[i];
           const d = item.y - camY;
-          if (d < -20 || d > VIEW) continue;
+          if (d > VIEW) break; // sorted by distance, so nothing further on is in view
+          if (got.has(item.n)) continue;
           let draw;
           switch (item.kind) {
             case 'coin': draw = () => drawCoin(d, item.lane * LANE_X, 36, t); break;
@@ -1012,6 +1051,8 @@ ClubDojoMinigames.register({
         const now = performance.now();
         if (data.type === 'track') {
           track = data;
+          track.items.sort((a, b) => a.y - b.y);
+          itemStart = 0;
           got = new Set();
           maxLives = data.lives || 3;
           myLives = maxLives;
@@ -1085,6 +1126,7 @@ ClubDojoMinigames.register({
         } else if (data.type === 'over') {
           applyPlayers(data.players); // the final positions, so the last few metres are not lost
           over = true;
+          if (!out && !run.finished) bannerShow("Time's up!", '#ffd23f');
           finalReport();
         }
       },

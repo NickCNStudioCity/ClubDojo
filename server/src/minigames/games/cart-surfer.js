@@ -8,9 +8,9 @@
 // Rails: lane -1 (left), 0 (middle), 1 (right). Distance y runs from 0 to trackLength.
 // Inputs: { type: 'move', dir: -1 | 1 }, { type: 'jump' }, { type: 'duck' }.
 // Item kinds: coin, rock (one rail; switch or jump), beam (all rails; duck), magnet, shield, gem.
-const HIT_Y = 16; // how close along the track counts as touching an item
-const STATE_EVERY = 2; // tickRate 20 -> broadcast 10 times a second
-const DISTANCE_PER_POINT = 50; // 1 point per 50 units of track covered
+const HIT_Y = 24; // how close along the track counts as touching an item (wide enough that a fast cart can't skip past one between ticks)
+const STATE_EVERY = 1; // tickRate 20 -> broadcast 20 times a second
+const DISTANCE_PER_POINT = 100; // 1 point per 100 units of track covered
 const STREAK_STEP = 8; // coins in a row for each +1 on the multiplier
 const POSE_RIDE = 0, POSE_AIR = 1, POSE_DUCK = 2;
 
@@ -26,11 +26,11 @@ module.exports = {
 
   // Tuning values; read through ctx.settings so admins can change them later.
   defaults: {
-    trackLength: 3200, // distance to the finish line
+    trackLength: 7000, // distance to the finish line
     roundMs: 60000, // time limit; anyone still riding is ranked by distance
-    startSpeed: 140, // distance per second at the start
-    accel: 6, // extra speed gained per second
-    maxSpeed: 260, // speed cap
+    startSpeed: 230, // distance per second at the start
+    accel: 8, // extra speed gained per second
+    maxSpeed: 420, // speed cap
     stunMs: 900, // time a crashed cart spends at a crawl
     crashCoins: 2, // coins knocked off the cart on a crash
     lives: 3, // carts you start with; each crash costs one
@@ -41,7 +41,7 @@ module.exports = {
     gemCoins: 5, // coins a gem is worth (before the multiplier)
   },
 
-  // Points: 1 per coin, plus 1 per 50 units of distance. Coins follow the score.
+  // Points: 1 per coin, plus 1 per 100 units of distance. Coins follow the score.
   rewards(result) {
     return { coins: result.score * 2, xp: Math.floor(result.score / 2) };
   },
@@ -51,6 +51,7 @@ module.exports = {
     const carts = new Map();
     const items = makeTrack(ctx, s.trackLength);
     let elapsed = 0;
+    let speedNow = s.startSpeed;
     let ticks = 0;
     let finishCount = 0;
     let done = false;
@@ -70,7 +71,7 @@ module.exports = {
     function pose(c, now) { return now < c.airUntil ? POSE_AIR : now < c.duckUntil ? POSE_DUCK : POSE_RIDE; }
     function mult(c) { return Math.min(s.maxMultiplier, 1 + Math.floor(c.streak / STREAK_STEP)); }
 
-    // id -> [lane, y, finished, stunned, coins, lives, pose, multiplier, shield, magnet tenths left]
+    // id -> [lane, y, finished, stunned, coins, lives, pose, multiplier, shield, magnet tenths left, speed]
     function snapshot() {
       const now = ctx.now();
       const players = {};
@@ -79,6 +80,7 @@ module.exports = {
         players[id] = [
           c.lane, round(c.y, 1), c.place !== null ? 1 : 0, now < c.stunUntil ? 1 : 0, c.coins, c.lives,
           pose(c, now), mult(c), c.shield ? 1 : 0, Math.max(0, Math.ceil((c.magnetUntil - now) / 100)),
+          c.place !== null || c.out ? 0 : Math.round(now < c.stunUntil ? speedNow * 0.25 : speedNow),
         ];
       }
       return players;
@@ -146,6 +148,7 @@ module.exports = {
       elapsed += dt;
       const now = ctx.now();
       const speed = Math.min(s.maxSpeed, s.startSpeed + s.accel * elapsed);
+      speedNow = speed;
 
       for (const id of running()) {
         const c = carts.get(id);
@@ -236,42 +239,42 @@ module.exports = {
   },
 };
 
-// Lay out the track. Rows come every 60-120 units. Most rows are rockfalls that leave at least
-// one rail clear (and every rock can be jumped), with coins on the clear rails. Once the run is
-// under way some rows are low beams across all three rails, which you duck under. Coin trails fill
-// the wider gaps, and a pickup (magnet, shield or gem) turns up every 420-620 units.
+// Lay out the track. Rows are well spread out, 190-320 units apart, to suit the speed. Most rows are
+// one rockfall (now and then two) leaving a clear rail, and every rock can be jumped, with coins on
+// the clear rails. Low beams across all three rails are rare. Coin trails fill the wider gaps, and
+// a pickup (magnet, shield or gem) turns up every 800-1200 units.
 // The layout is random per round and sent to clients at the start.
 function makeTrack(ctx, length) {
   const lanes = [-1, 0, 1];
   const out = [];
-  let y = 260;
+  let y = 420;
   let n = 0;
-  let nextPickup = 700;
+  let nextPickup = 1100;
   let lastBeam = 0;
   while (y < length - 120) {
-    const beam = y > 800 && y - lastBeam > 360 && ctx.randomInt(5) === 0;
+    const beam = y > 1400 && y - lastBeam > 1100 && ctx.randomInt(6) === 0;
     let rockLanes = [];
     if (beam) {
       out.push({ lane: 0, y, kind: 'beam', n: n++ });
       lastBeam = y;
     } else {
       const start = ctx.randomInt(3);
-      rockLanes = ctx.randomInt(3) === 0 ? [lanes[start], lanes[(start + 1) % 3]] : [lanes[start]];
+      rockLanes = ctx.randomInt(5) === 0 ? [lanes[start], lanes[(start + 1) % 3]] : [lanes[start]];
       for (const lane of rockLanes) out.push({ lane, y, kind: 'rock', n: n++ });
     }
     const free = lanes.filter((l) => !rockLanes.includes(l));
-    const gap = 60 + ctx.randomInt(60);
+    const gap = 190 + ctx.randomInt(130);
     if (y >= nextPickup) {
       const kinds = ['magnet', 'shield', 'gem', 'gem'];
       out.push({ lane: free[ctx.randomInt(free.length)], y: y + Math.min(34, gap / 2), kind: kinds[ctx.randomInt(kinds.length)], n: n++ });
-      nextPickup = y + 420 + ctx.randomInt(200);
+      nextPickup = y + 800 + ctx.randomInt(400);
     } else if (!beam) {
       for (const lane of free) if (ctx.randomInt(2) === 0) out.push({ lane, y, kind: 'coin', n: n++ });
     }
     // a short coin trail in a wide gap leads the eye toward a safe rail
-    if (gap >= 90 && !beam) {
+    if (gap >= 240 && !beam) {
       const lane = free[ctx.randomInt(free.length)];
-      for (let k = 1; k <= 2; k++) out.push({ lane, y: y + (gap * k) / 3, kind: 'coin', n: n++ });
+      for (let k = 1; k <= 3; k++) out.push({ lane, y: y + (gap * k) / 4, kind: 'coin', n: n++ });
     }
     y += gap;
   }

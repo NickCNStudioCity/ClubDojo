@@ -5,15 +5,20 @@
 // headband colour; the solo bot is a ninja too. Server rules: server/src/minigames/games/tennis.js
 ClubDojoMinigames.register({
   id: 'tennis',
+  ownEnding: true,
+  guide: {
+    summary: 'One full match, with no clock. Points go 15, 30, 40, then game. At 40-40 it is deuce: win the advantage, then one more point to take the match.',
+    controls: [['Arrows or WASD', 'Move around your half'], ['Tap Space', 'Volley: a soft drop near the net'], ['Hold, then release', 'Power shot: the longer you hold, the deeper it lands'], ['← → while serving', 'Angle your serve']],
+    tips: ['Stand so the landing spot is inside your circle, then release as the ball bounces.', 'Early sends the ball left, late sends it right. Right on the bounce is a Perfect.', 'Rallying fills Focus. Full Focus plus a power shot is a Shadow Strike.', 'Solo, the bot levels up every time you beat it.'],
+  },
 
   mount(ctx) {
     const { h, el, avatar } = ctx;
     const W = 20, H = 30, S = 18;     // court units and pixels per unit
-    const MX = 2.2;                   // stands on each side of the court, in units
     const NET = H / 2;
-    const LW = Math.round((W + MX * 2) * S), LH = H * S;   // logical canvas size
-    const OX = MX * S;
-    const X = (u) => OX + u * S, Y = (v) => v * S;
+    const BASE_W = 440, BASE_H = H * S;
+    let LW = BASE_W, LH = BASE_H, OX = (LW - W * S) / 2, OY = 0, scale = 2;   // logical canvas size and the court's offset: resized to fill the screen
+    const X = (u) => OX + u * S, Y = (v) => OY + v * S;
     const BOT_ID = '__bot';
     const BOT_LOADOUT = { v: 1, id: BOT_ID, name: 'Sensei Bot', color: '#2b2f3a', headband: '#e8453c', belt: 'black', accessories: {} };
     const SWING_KEYS = ['Space', 'Enter'];
@@ -22,7 +27,7 @@ ClubDojoMinigames.register({
     let dirX = 0, dirY = 0;
     let state = null, prev = null;
     let stateAt = 0, prevAt = 0;
-    let tune = { reach: 2.6, early: 350, late: 250, perfect: 70, spread: 4.5, tapMs: 200, chargeMs: 1000, superMinC: 0.6, finalMs: 10000, targetR: 1.8 };
+    let tune = { reach: 2.6, early: 350, late: 250, perfect: 70, spread: 4.5, tapMs: 200, chargeMs: 1000, superMinC: 0.6, targetR: 1.8 };
     let solo = ctx.players.length === 1;
     let pressAt = null;               // local time (ms) the swing went down; null when not holding
     let raf = 0;
@@ -34,9 +39,9 @@ ClubDojoMinigames.register({
 
     // ---------- DOM ----------
     const style = h('style', {}, `
-      .tn { display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; padding: 6px; box-sizing: border-box; }
-      .tn-hud { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; width: min(100%, 520px); }
-      .tn-card { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,.28); border-radius: 12px; padding: 4px 10px 4px 4px; min-width: 0; border: 2px solid transparent; }
+      .tn { position: absolute; inset: 0; overflow: hidden; --stand: 200px; }
+      .tn-hud { position: absolute; top: 6px; left: 8px; right: 8px; display: grid; grid-template-columns: minmax(0, 240px) auto minmax(0, 240px); justify-content: space-between; gap: 10px; align-items: center; pointer-events: none; z-index: 1; }
+      .tn-card { display: flex; align-items: center; gap: 8px; color: #fff; background: rgba(0,0,0,.5); border-radius: 12px; padding: 4px 10px 4px 4px; min-width: 0; border: 2px solid transparent; }
       .tn-card.right { flex-direction: row-reverse; padding: 4px 4px 4px 10px; text-align: right; }
       .tn-card.me { border-color: #ffd23f; }
       .tn-card .nm { font-size: 12px; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -46,15 +51,17 @@ ClubDojoMinigames.register({
       .tn-focus > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #8a5cff, #d36bff); transition: width .2s; }
       .tn-focus.full > i { background: linear-gradient(90deg, #ffd23f, #d36bff, #8a5cff); animation: tnpulse .6s infinite alternate; }
       @keyframes tnpulse { from { filter: brightness(1); } to { filter: brightness(1.6); } }
-      .tn-mid { text-align: center; font-family: var(--display); }
+      .tn-mid { text-align: center; font-family: var(--display); color: #fff; text-shadow: 0 2px 3px rgba(0,0,0,.75); }
       .tn-mid .time { font-size: 26px; line-height: 1; }
-      .tn-mid .time.final { color: #ffd23f; }
+      .tn-mid .time.hot { color: #ffd23f; }
       .tn-mid .rally { font-size: 12px; opacity: .85; min-height: 15px; }
-      .tn-status { font-family: var(--display); font-size: 20px; min-height: 26px; text-align: center; }
-      .tn-hint { font-family: var(--display); font-size: 15px; min-height: 19px; text-align: center; color: var(--gold, #f5c542); }
-      .tn-canvas { height: min(58vh, 600px); max-width: 100%; aspect-ratio: ${LW} / ${LH}; border-radius: 14px; box-shadow: 0 6px 0 rgba(0,0,0,.35); touch-action: none; }
-      .tn-help { font-size: 12px; opacity: .75; text-align: center; max-width: 620px; }
-      .tn-btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+      .tn-side { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: calc(var(--stand) - 24px); display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; box-sizing: border-box; border-radius: 12px; background: rgba(0,0,0,.62); pointer-events: none; z-index: 1; color: #fff; text-shadow: 0 2px 3px rgba(0,0,0,.8); }
+      .tn.tight .tn-side { left: 8px; right: 8px; width: auto; top: 62px; transform: none; }
+      .tn-status { font-family: var(--display); font-size: 22px; text-align: center; }
+      .tn-hint { font-family: var(--display); font-size: 16px; text-align: center; color: var(--gold, #f5c542); }
+      .tn-canvas { touch-action: none; }
+      .tn-btns { position: absolute; right: 12px; bottom: 12px; z-index: 1; }
+      @media (hover: hover) and (pointer: fine) { .tn-btns { display: none; } }
       .tn-btns .btn.held { outline: 3px solid #f5c542; }
     `);
     function card(right) {
@@ -67,18 +74,16 @@ ClubDojoMinigames.register({
       return { root, portrait, nm, sc, fill, focus, id: null };
     }
     const cards = [card(false), card(true)];
-    const timeEl = h('div', { class: 'time' }, '--');
+    const timeEl = h('div', { class: 'time' }, 'MATCH');
     const rallyEl = h('div', { class: 'rally' });
     const hud = h('div', { class: 'tn-hud' }, cards[0].root, h('div', { class: 'tn-mid' }, timeEl, rallyEl), cards[1].root);
     const status = h('div', { class: 'tn-status' }, 'Get ready...');
     const hint = h('div', { class: 'tn-hint' });
     const canvas = h('canvas', { class: 'tn-canvas' });
-    const DPR = Math.max(2, Math.min(3, window.devicePixelRatio || 1));
-    canvas.width = LW * DPR; canvas.height = LH * DPR;
     const g = canvas.getContext('2d');
     const actionBtn = h('button', { class: 'btn small', tabindex: '-1', onpointerdown: (e) => { e.preventDefault(); press(); } }, 'Swing (Space)');
-    const help = h('div', { class: 'tn-help' });
-    el.append(style, h('div', { class: 'tn' }, hud, status, hint, canvas, h('div', { class: 'tn-btns' }, actionBtn), help));
+    const rootEl = h('div', { class: 'tn' }, canvas, hud, h('div', { class: 'tn-side' }, status, hint), h('div', { class: 'tn-btns' }, actionBtn));
+    el.append(style, rootEl);
 
     // ---------- input ----------
     function send(dx, dy) { ctx.send({ type: 'move', dx, dy }); }
@@ -102,13 +107,6 @@ ClubDojoMinigames.register({
     const depthFor = (c, fromBottom) => (fromBottom
       ? (NET - 4) - c * ((NET - 4) - 3)
       : (NET + 4) + c * ((H - 3) - (NET + 4)));
-
-    function applyMode() {
-      help.textContent = 'Move: arrows or WASD. Tap Space to volley (a soft drop near the net). Hold Space to charge a deeper power shot, then release as the ball bounces: early sends it left, late right, right on the bounce is a Perfect. '
-        + 'Fill Focus by rallying, then hit a power shot for a Shadow Strike. Long rallies and the final 10 seconds are worth extra, and lanterns are bonus targets.'
-        + (solo ? ' The bot gets stronger every time you beat it.' : '');
-    }
-    applyMode();
 
     function refreshDir() {
       const x = (keys.has('ArrowRight') || keys.has('KeyD') ? 1 : 0) - (keys.has('ArrowLeft') || keys.has('KeyA') ? 1 : 0);
@@ -179,11 +177,14 @@ ClubDojoMinigames.register({
 
     // ---------- static court (drawn once) ----------
     const courtLayer = document.createElement('canvas');
-    courtLayer.width = LW * DPR; courtLayer.height = LH * DPR;
-    (function paintCourt() {
+    const CROWD_COLS = ['#e8453c', '#f5b82e', '#3fbf7f', '#ffffff', '#2f6fd1', '#8a5cff', '#f28cb1', '#20262e'];
+    const LIVE_COLS = 3;   // this many rows of fans beside the court are animated; the rest are painted once
+    function paintCourt() {
+      courtLayer.width = canvas.width; courtLayer.height = canvas.height;
       const c = courtLayer.getContext('2d');
-      c.scale(DPR, DPR);
-      // stands
+      c.setTransform(scale, 0, 0, scale, 0, 0);
+      // stands, on every side the court doesn't reach
+      c.fillStyle = '#3a2a22'; c.fillRect(0, 0, LW, LH);
       const stand = c.createLinearGradient(0, 0, OX, 0);
       stand.addColorStop(0, '#3a2a22'); stand.addColorStop(1, '#5a4033');
       c.fillStyle = stand; c.fillRect(0, 0, OX, LH);
@@ -191,16 +192,29 @@ ClubDojoMinigames.register({
       stand2.addColorStop(0, '#3a2a22'); stand2.addColorStop(1, '#5a4033');
       c.fillStyle = stand2; c.fillRect(LW - OX, 0, OX, LH);
       c.fillStyle = 'rgba(0,0,0,.25)';
-      for (let y = 0; y < LH; y += 18) { c.fillRect(0, y, OX, 2); c.fillRect(LW - OX, y, OX, 2); }
+      for (let y = 0; y < LH; y += 18) c.fillRect(0, y, LW, 2);
+      // the crowd further back never moves, so it's painted once
+      let seat = 0;
+      for (let y = 9; y < LH; y += 18) {
+        for (let x = 8 + ((y - 9) / 18) % 2 * 6; x < LW; x += 14) {
+          seat++;
+          const beside = (x > OX - 8 - LIVE_COLS * 14 && x < OX) || (x < LW - OX + 8 + LIVE_COLS * 14 && x > LW - OX);
+          const inCourt = x >= OX - 2 && x <= LW - OX + 2 && y >= OY - 2 && y <= LH - OY + 2;
+          if (beside || inCourt || hash(seat) < 0.12) continue;
+          c.fillStyle = CROWD_COLS[Math.floor(hash(seat + 3) * CROWD_COLS.length)];
+          roundRectOn(c, x - 5, y - 3, 10, 9, 4); c.fill();
+          c.fillStyle = '#f1d3b3'; c.beginPath(); c.arc(x, y - 6, 3.4, 0, Math.PI * 2); c.fill();
+        }
+      }
       // runoff (green) and court (blue hard court)
-      c.fillStyle = '#2f8a5b'; c.fillRect(OX, 0, W * S, LH);
-      const surf = c.createLinearGradient(0, 0, 0, LH);
+      c.fillStyle = '#2f8a5b'; c.fillRect(OX, OY, W * S, H * S);
+      const surf = c.createLinearGradient(0, OY, 0, OY + H * S);
       surf.addColorStop(0, '#2a64a8'); surf.addColorStop(0.5, '#3274bd'); surf.addColorStop(1, '#2a64a8');
       c.fillStyle = surf; c.fillRect(X(1.5), Y(1.5), (W - 3) * S, (H - 3) * S);
       // grain
       for (let i = 0; i < 1400; i++) {
         c.fillStyle = hash(i) > 0.5 ? 'rgba(255,255,255,.035)' : 'rgba(0,0,0,.05)';
-        c.fillRect(OX + hash(i + 7) * W * S, hash(i + 13) * LH, 1.5, 1.5);
+        c.fillRect(OX + hash(i + 7) * W * S, OY + hash(i + 13) * H * S, 1.5, 1.5);
       }
       // wear in front of each baseline
       c.fillStyle = 'rgba(255,255,255,.05)';
@@ -232,18 +246,31 @@ ClubDojoMinigames.register({
         c.fillStyle = '#5c6b78'; c.beginPath(); c.arc(X(px) - 1, ny - 4, 2, 0, Math.PI * 2); c.fill();
       }
       // umpire chair in the left stand by the net
-      c.fillStyle = '#c9a36b'; c.fillRect(OX * 0.25, ny - 10, OX * 0.5, 20);
-      c.fillStyle = '#8a6a3f'; c.fillRect(OX * 0.25, ny - 12, OX * 0.5, 4);
-    }());
+      c.fillStyle = '#c9a36b'; c.fillRect(OX - 32, ny - 10, 24, 20);
+      c.fillStyle = '#8a6a3f'; c.fillRect(OX - 32, ny - 12, 24, 4);
+    }
+    function roundRectOn(c, x, y, w, hh, r) {
+      c.beginPath();
+      c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + hh, r); c.arcTo(x + w, y + hh, x, y + hh, r);
+      c.arcTo(x, y + hh, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
+    }
 
     // Crowd heads in the stands, drawn live so they can cheer.
     const crowd = [];
-    for (let i = 0; i < 2 * Math.floor(LH / 18); i++) {
-      const right = i % 2 === 1;
-      const row = Math.floor(i / 2);
-      if (Math.abs(row * 18 + 9 - LH / 2) < 16 && !right) continue;   // the umpire chair
-      const cols = ['#e8453c', '#f5b82e', '#3fbf7f', '#ffffff', '#2f6fd1', '#8a5cff', '#f28cb1', '#20262e'];
-      crowd.push({ x: right ? LW - OX * (0.3 + hash(i) * 0.4) : OX * (0.3 + hash(i) * 0.4), y: row * 18 + 9, color: cols[Math.floor(hash(i + 3) * cols.length)], ph: hash(i + 9) * 6 });
+    function buildCrowd() {
+      crowd.length = 0;
+      if (OX < 12) return;
+      const cols = Math.min(LIVE_COLS, Math.floor((OX - 4) / 14));
+      for (let row = 0; row < Math.floor(LH / 18); row++) {
+        for (let col = 0; col < Math.max(1, cols); col++) {
+          for (const right of [false, true]) {
+            const y = row * 18 + 9;
+            if (!right && col === 0 && Math.abs(y - (OY + (H * S) / 2)) < 18) continue;   // the umpire chair
+            const n = row * 31 + col * 7 + (right ? 1 : 0);
+            crowd.push({ x: right ? LW - OX + 10 + col * 14 : OX - 10 - col * 14, y, color: CROWD_COLS[Math.floor(hash(n + 3) * CROWD_COLS.length)], ph: hash(n + 9) * 6 });
+          }
+        }
+      }
     }
     function drawCrowd(now) {
       const cheer = now - cheerAt < 1200;
@@ -484,7 +511,7 @@ ClubDojoMinigames.register({
         g.globalAlpha = 1 - k; drawBallAt(X(x), Y(y), Math.abs(Math.sin(k * Math.PI * 2)) * 6 * (1 - k), 'drive', now); g.globalAlpha = 1;
       }
       // The server's ball sits with whoever serves next: bounce it in their hand.
-      const srv = state.serve ? playerPos(state.serve) : state.ball;
+      const srv = state.over ? null : state.serve ? playerPos(state.serve) : state.ball;
       if (srv) drawBallAt(X(srv.x) + 10, Y(srv.y) + 4, Math.abs(Math.sin(now / 320)) * 16 + 4, 'serve', now);
     }
 
@@ -537,7 +564,7 @@ ClubDojoMinigames.register({
       const now = performance.now();
       const dt = Math.min(0.05, (now - lastFrame) / 1000);
       lastFrame = now;
-      g.setTransform(DPR, 0, 0, DPR, 0, 0);
+      g.setTransform(scale, 0, 0, scale, 0, 0);
       g.clearRect(0, 0, LW, LH);
       if (now < shakeUntil) g.translate(rand(-shakeAmp, shakeAmp), rand(-shakeAmp, shakeAmp));
       g.drawImage(courtLayer, 0, 0, LW, LH);
@@ -565,10 +592,6 @@ ClubDojoMinigames.register({
         drawPlayer(r, now);
       }
       if (!ballDrawn) { drawTrail(now); drawBall(now); }
-      if (state.final) {
-        g.strokeStyle = `rgba(255,210,63,${0.45 + 0.35 * Math.sin(now / 150)})`; g.lineWidth = 6;
-        g.strokeRect(3, 3, LW - 6, LH - 6);
-      }
       drawBanner(now);
     }
 
@@ -589,16 +612,15 @@ ClubDojoMinigames.register({
       for (const cd of cards) {
         const r = rowOf(state, cd.id);
         if (!r) continue;
-        if (cd.sc.textContent !== String(r.s)) cd.sc.textContent = String(r.s);
+        if (cd.sc.textContent !== r.c) cd.sc.textContent = r.c;
         cd.fill.style.width = `${r.f}%`;
         cd.focus.classList.toggle('full', r.f >= 100);
         if (cd.id === BOT_ID) cd.nm.textContent = `Sensei Bot · Lv ${state.lv || 1}`;
       }
-      const secs = Math.ceil((state.left || 0) / 1000);
-      timeEl.textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
-      timeEl.classList.toggle('final', !!state.final);
-      const worth = (1 + Math.floor(Math.max(0, state.rally - 1) / 5)) * (state.final ? 2 : 1);
-      rallyEl.textContent = state.rally > 1 ? `Rally ${state.rally} · point worth ${worth}` : state.final ? 'Points worth double!' : '';
+      const label = state.over ? 'FINAL' : state.deuce ? 'DEUCE' : state.adv ? `ADVANTAGE ${state.adv === ctx.youId ? 'YOU' : (state.adv === BOT_ID ? 'BOT' : (names.get(state.adv) || '')).toUpperCase()}` : state.gp ? 'GAME POINT' : 'MATCH';
+      timeEl.textContent = label;
+      timeEl.classList.toggle('hot', !!(state.deuce || state.adv || state.gp));
+      rallyEl.textContent = state.rally > 1 ? `Rally ${state.rally}` : '';
     }
 
     const KIND_NAME = { volley: 'Drop volley', drive: 'Drive', power: 'Power shot', strike: 'SHADOW STRIKE', serve: 'Serve' };
@@ -608,6 +630,16 @@ ClubDojoMinigames.register({
     }
     const WHY = { out: 'out', reach: 'couldn\'t reach it', ace: 'ace!', strike: 'Shadow Strike!' };
 
+    ctx.fit(canvas, BASE_W, BASE_H, (f) => {
+      LW = f.w; LH = f.h; scale = f.scale;
+      OX = (LW - W * S) / 2; OY = (LH - H * S) / 2;
+      paintCourt();
+      buildCrowd();
+      const stand = OX * (rootEl.clientWidth / LW);
+      rootEl.style.setProperty('--stand', `${Math.round(stand)}px`);
+      rootEl.classList.toggle('tight', stand < 170);
+    }, { maxScale: 3 });
+
     raf = requestAnimationFrame(render);
 
     return {
@@ -616,9 +648,8 @@ ClubDojoMinigames.register({
         if (data.type === 'begin') {
           solo = !!data.solo;
           if (data.tune) tune = { ...tune, ...data.tune };
-          applyMode();
           setupCards();
-          status.textContent = solo ? 'Rally! Beat Sensei Bot to level it up' : `Rally! ${Math.round(data.roundMs / 1000)} seconds`;
+          status.textContent = data.server === ctx.youId ? 'You serve this match. First to win by two!' : 'First to 4 points, win by two!';
         } else if (data.type === 'state') {
           prev = state; prevAt = stateAt;
           state = data;
@@ -651,26 +682,28 @@ ClubDojoMinigames.register({
         } else if (data.type === 'bonus') {
           const x = X(data.x), y = Y(data.y);
           burst(x, y, ['#ffd23f', '#d33a2c', '#fff6c2'], 24, 110, { life: 0.8, size: 3 });
-          floatText(x, y - 20, `${data.id === ctx.youId ? 'Lantern' : 'Lantern'} +${data.value}`, '#ffd23f', 16);
-        } else if (data.type === 'final') {
-          showBanner('FINAL 10 SECONDS', 'Every point is worth double!', '#ffd23f', 1600);
-          cheerAt = now;
+          floatText(x, y - 20, 'Lantern bonus!', '#ffd23f', 16);
+        } else if (data.type === 'match') {
+          const won = data.winner === ctx.youId;
+          const who = data.winner === BOT_ID ? 'Sensei Bot' : (names.get(data.winner) || 'They');
+          showBanner(won ? 'YOU WIN!' : `${who} wins`, 'Game, set and match', won ? '#ffd23f' : '#ff8a80', 4000);
+          cheerAt = now + 2000;
+          if (won) for (let i = 0; i < 90; i++) parts.push({ x: rand(0, LW), y: rand(-60, -5), vx: rand(-30, 30), vy: rand(60, 170), life: 0, max: 2.6, color: ['#ffd23f', '#e8453c', '#3fbf7f', '#2f6fd1', '#ffffff'][i % 5], size: 3, grav: 60, kind: 'confetti' });
         } else if (data.type === 'point') {
           const won = data.winner === ctx.youId;
           const who = won ? 'You' : data.winner === BOT_ID ? 'Bot' : (names.get(data.winner) || 'They');
           const why = WHY[data.why] ? ` (${WHY[data.why]})` : '';
           status.textContent = `${who} win${who === 'You' || who === 'They' ? '' : 's'} the point${why}`;
           const title = won ? (data.why === 'ace' ? 'ACE!' : data.why === 'strike' ? 'UNSTOPPABLE!' : data.why === 'out' ? 'THEIR ERROR' : 'WINNER!') : (data.why === 'out' ? 'OUT!' : data.why === 'ace' ? 'ACED' : 'POINT LOST');
-          const sub = `+${data.value} ${won ? 'for you' : `for ${who}`}${data.rally > 1 ? ` · ${data.rally}-shot rally` : ''}`;
-          showBanner(title, sub, won ? '#9cf2b0' : '#ff8a80', 1300);
-          if (data.x !== null && data.x !== undefined) floatText(X(data.x), Y(data.y) - 10, `+${data.value}`, won ? '#9cf2b0' : '#ff8a80', 18);
+          const score = data.deuce ? 'Deuce' : data.adv ? `Advantage ${data.adv === ctx.youId ? 'you' : data.adv === BOT_ID ? 'Bot' : (names.get(data.adv) || '')}` : data.calls.join(' - ');
+          const sub = `${score}${data.rally > 1 ? ` · ${data.rally}-shot rally` : ''}`;
+          if (!data.won) showBanner(title, sub, won ? '#9cf2b0' : '#ff8a80', 1300);
           if (won) {
             cheerAt = now;
-            for (let i = 0; i < 40; i++) parts.push({ x: rand(OX, LW - OX), y: -5, vx: rand(-30, 30), vy: rand(60, 160), life: 0, max: 1.6, color: ['#ffd23f', '#e8453c', '#3fbf7f', '#2f6fd1', '#ffffff'][i % 5], size: 3, grav: 60, kind: 'confetti' });
+            for (let i = 0; i < 40; i++) parts.push({ x: rand(OX, LW - OX), y: OY - 5, vx: rand(-30, 30), vy: rand(60, 160), life: 0, max: 1.6, color: ['#ffd23f', '#e8453c', '#3fbf7f', '#2f6fd1', '#ffffff'][i % 5], size: 3, grav: 60, kind: 'confetti' });
           }
           if (solo && won && data.lv > 1) floatText(X(W / 2), Y(4), `Sensei Bot is now Lv ${data.lv}`, '#f2a49c', 13);
         } else if (data.type === 'stats') {
-          timeEl.textContent = '0:00';
           const mine = data.players.find((p) => p.id === ctx.youId);
           if (mine) status.textContent = `Best rally ${mine.bestRally} · Perfects ${mine.perfects} · Strikes ${mine.strikes} · Aces ${mine.aces} · Lanterns ${mine.targets}${data.lv ? ` · Bot reached Lv ${data.lv}` : ''}`;
         }

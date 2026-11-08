@@ -9,10 +9,11 @@
 //   Serve: hold left or right as you release to angle it.
 // Focus fills with every return. Full Focus + a power shot = Shadow Strike: a very fast shot that
 // shrinks the receiver's reach for that ball.
-// Points are worth more in long rallies (+1 every 5 returns), and double in the final seconds.
-// A glowing lantern target sometimes appears on a half; land a shot on it for a bonus point.
+// One match, no clock: 15, 30, 40, then game. At 40-40 it's deuce, and you need advantage and one
+// more point to win. One ninja serves the whole match.
+// Long rallies (+1 every 5 returns) and lantern targets add to your reward score, not the match score.
 // The server moves the ball and the players. Clients send move, press and release.
-// Score: points won (with bonuses). Guide: docs/minigames/README.md
+// Score: rally-weighted points, plus a bonus for winning the match. Guide: docs/minigames/README.md
 const W = 20;               // court width, in units
 const H = 30;               // court length; the net is at H / 2
 const NET = H / 2;
@@ -36,12 +37,13 @@ const SUPER_MIN_C = 0.6;    // a Shadow Strike needs at least this much charge
 const SUPER_SPEED = 1.55;   // Shadow Strike speed multiplier
 const SUPER_REACH = 0.6;    // receiver reach multiplier against a Shadow Strike
 const RALLY_STEP = 5;       // +1 point value every this many returns
-const FINAL_MS = 10000;     // the last this-many ms: points are worth double
+const WIN_BONUS = 10;       // reward points for winning the match
+const CALLS = ['0', '15', '30', '40'];
 const TARGET_EVERY_MS = 7000; // a new lantern target appears this long after the last one went
 const TARGET_LIFE_MS = 9000;
 const TARGET_R = 1.8;       // landing within this of a target's centre hits it
 const BOT_ID = '__bot';
-const TUNE = { reach: REACH, early: EARLY_MS, late: LATE_MS, perfect: PERFECT_MS, spread: SPREAD, tapMs: TAP_MS, chargeMs: CHARGE_MS, superMinC: SUPER_MIN_C, finalMs: FINAL_MS, targetR: TARGET_R };
+const TUNE = { reach: REACH, early: EARLY_MS, late: LATE_MS, perfect: PERFECT_MS, spread: SPREAD, tapMs: TAP_MS, chargeMs: CHARGE_MS, superMinC: SUPER_MIN_C, targetR: TARGET_R };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const r2 = (v) => Math.round(v * 100) / 100;
@@ -80,14 +82,14 @@ function botSkill(lv) {
 module.exports = {
   id: 'tennis',
   name: 'Tennis',
-  description: 'Rally on a top-down court as your own ninja. Tap Space to volley, hold for power, and time the release to aim. Fill Focus for a Shadow Strike. Solo vs a levelling bot, or two players.',
+  description: 'One match as your own ninja, all the way through deuce and advantage. Tap Space to volley, hold for power, and time the release to aim. Solo vs a levelling bot, or two players.',
   minPlayers: 1,
   maxPlayers: 2,
   color: '#3b7fc4',
   icon: '🎾',
   tickRate: 20,
 
-  defaults: { roundMs: 60000, serveDelayMs: 1200 },
+  defaults: { serveDelayMs: 1200 },
 
   create(ctx) {
     return createMatch(ctx);
@@ -96,7 +98,7 @@ module.exports = {
 
 function newSide(id, bottom, bot) {
   return {
-    id, bottom, bot, x: W / 2, y: bottom ? H - 2 : 2, dx: 0, dy: 0, score: 0,
+    id, bottom, bot, x: W / 2, y: bottom ? H - 2 : 2, dx: 0, dy: 0, score: 0, points: 0,
     pressAt: null, swing: null, focus: 0, moving: false,
     stats: { bestRally: 0, perfects: 0, strikes: 0, aces: 0, targets: 0 },
   };
@@ -110,28 +112,43 @@ function createMatch(ctx) {
     : [newSide(ctx.players[0].id, true, false), newSide(ctx.players[1].id, false, false)];
 
   let flight = null;          // { from, ox, oy, tx, ty, c, kind, out, reach, serve, startMs, durMs }: the ball in the air
-  let server = solo ? sides[1] : sides[0];  // whoever serves next; solo starts with the bot
+  const server = solo ? sides[0] : sides[ctx.randomInt(2)];  // serves the whole match, like one game of tennis
   let waiting = false;        // a human server is due to serve
   let serveTimer = null;
-  let timeTimer = null;
-  let finalTimer = null;
   let targetTimer = null;
   let ended = false;
-  let final = false;          // the last seconds: points are worth double
   let rally = 0;              // returns in the current point
   let lv = 1;                 // solo bot level
   let target = null;          // { x, y, top, until }
-  let roundStart = 0;
   const ball = { x: server.x, y: server.y };
 
   const other = (p) => (p === sides[0] ? sides[1] : sides[0]);
 
-  function finish() {
+  // The tennis call for a side: 0, 15, 30, 40, or AD.
+  function callOf(p) {
+    const a = p.points, b = other(p).points;
+    if (a >= 3 && b >= 3) return a > b ? 'AD' : '40';
+    return CALLS[Math.min(3, a)];
+  }
+  const isDeuce = () => sides[0].points >= 3 && sides[0].points === sides[1].points;
+  const leader = () => (sides[0].points === sides[1].points ? null : sides[0].points > sides[1].points ? sides[0] : sides[1]);
+  const hasAdvantage = () => sides[0].points >= 3 && sides[1].points >= 3 && !!leader();
+  const isGamePoint = () => { const l = leader(); return !!l && l.points >= 3 && l.points - other(l).points >= 1; };
+
+  function finish(winner) {
     if (ended) return;
     ended = true;
-    ctx.cancel(serveTimer); ctx.cancel(timeTimer); ctx.cancel(finalTimer); ctx.cancel(targetTimer);
+    ctx.cancel(serveTimer); ctx.cancel(targetTimer);
+    flight = null;
+    waiting = false;
+    target = null;
+    ctx.broadcast(snapshot());
+    ctx.broadcast({ type: 'match', winner: winner.id, calls: sides.map(callOf), points: sides.map((p) => p.points) });
     ctx.broadcast({ type: 'stats', players: sides.map((p) => ({ id: p.id, s: p.score, ...p.stats })), lv: solo ? lv : 0 });
-    ctx.end(sides.filter((p) => !p.bot).map((p) => ({ id: p.id, score: p.score })));
+    ctx.end(sides.filter((p) => !p.bot).map((p) => ({
+      id: p.id,
+      score: p === winner ? Math.max(p.score, other(p).score + 1) + WIN_BONUS : p.score, // the winner always places first
+    })));
   }
 
   function clampSide(p) {
@@ -154,7 +171,7 @@ function createMatch(ctx) {
     if (!target || f.out) return;
     if (target.top !== f.from.bottom) return;
     if (Math.hypot(f.tx - target.x, f.ty - target.y) > TARGET_R) return;
-    const value = final ? 2 : 1;
+    const value = 1;
     f.from.score += value;
     f.from.stats.targets++;
     ctx.broadcast({ type: 'bonus', id: f.from.id, x: r2(target.x), y: r2(target.y), value });
@@ -248,16 +265,22 @@ function createMatch(ctx) {
 
   function point(winner, loser, why, f) {
     if (ended) return;
-    const value = (1 + Math.floor(Math.max(0, rally - 1) / RALLY_STEP)) * (final ? 2 : 1);
+    const value = 1 + Math.floor(Math.max(0, rally - 1) / RALLY_STEP);
     winner.score += value;
+    winner.points++;
     if (why === 'ace') winner.stats.aces++;
     // Solo: the bot levels up when you beat it, and eases off a level when it wins a point while ahead.
     if (solo) {
       if (!winner.bot) lv = Math.min(8, lv + 1);
       else if (lv > 1 && winner.score > loser.score) lv--;
     }
-    ctx.broadcast({ type: 'point', winner: winner.id, why, value, rally, lv: solo ? lv : 0, x: f ? r2(f.tx) : null, y: f ? r2(f.ty) : null });
-    server = loser;
+    const won = winner.points >= 4 && winner.points - loser.points >= 2;
+    const lead = leader();
+    ctx.broadcast({
+      type: 'point', winner: winner.id, why, value, rally, lv: solo ? lv : 0, x: f ? r2(f.tx) : null, y: f ? r2(f.ty) : null,
+      calls: sides.map(callOf), deuce: isDeuce() ? 1 : 0, adv: hasAdvantage() ? lead.id : null, won: won ? 1 : 0,
+    });
+    if (won) return finish(winner);
     prepServe();
   }
 
@@ -324,26 +347,23 @@ function createMatch(ctx) {
         eta: Math.round(f.startMs + f.durMs - now), dur: Math.round(f.durMs), kind: f.kind, c: r2(f.c), reach: r2(f.reach),
       } : null,
       players: sides.map((p) => ({
-        id: p.id, x: r2(p.x), y: r2(p.y), s: p.score, f: Math.round(p.focus * 100),
+        id: p.id, x: r2(p.x), y: r2(p.y), s: p.score, c: callOf(p), f: Math.round(p.focus * 100),
         m: (p.bot ? p.moving : (p.dx || p.dy)) ? 1 : 0, dx: p.dx, ch: p.pressAt !== null ? 1 : 0,
       })),
       serve: waiting ? server.id : null,
       rally,
       lv: solo ? lv : 0,
-      final: final ? 1 : 0,
-      left: Math.max(0, Math.round(s.roundMs - (now - roundStart))),
+      deuce: isDeuce() ? 1 : 0,
+      adv: hasAdvantage() ? leader().id : null,
+      gp: isGamePoint() ? 1 : 0,
+      over: ended ? 1 : 0,
       tgt: target ? { x: r2(target.x), y: r2(target.y), t: Math.max(0, Math.round(target.until - now)) } : null,
     };
   }
 
   return {
     start() {
-      roundStart = ctx.now();
-      ctx.broadcast({ type: 'begin', roundMs: s.roundMs, solo, tune: TUNE });
-      timeTimer = ctx.after(s.roundMs, finish);
-      if (s.roundMs > FINAL_MS * 2) {
-        finalTimer = ctx.after(s.roundMs - FINAL_MS, () => { final = true; ctx.broadcast({ type: 'final' }); });
-      }
+      ctx.broadcast({ type: 'begin', solo, tune: TUNE, server: server.id });
       targetTimer = ctx.after(TARGET_EVERY_MS, spawnTarget);
       prepServe();
     },
@@ -387,7 +407,8 @@ function createMatch(ctx) {
     },
 
     leave(id) {
-      if (sides.some((p) => p.id === id)) finish();
+      const gone = sides.find((p) => p.id === id);
+      if (gone) finish(other(gone)); // the ninja still here wins
     },
 
     dispose() {},

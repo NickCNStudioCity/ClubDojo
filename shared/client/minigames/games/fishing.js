@@ -6,6 +6,11 @@
 // localStorage (per computer, cosmetic only).
 ClubDojoMinigames.register({
   id: 'fishing',
+  guide: {
+    summary: 'Hook as many fish as you can before time runs out, then bring them up out of the water to land them.',
+    controls: [['Mouse or finger', 'Steer the bobber around the water'], ['Click or Space', 'Take a fish off the hook once it is out of the water']],
+    tips: ['Deeper fish are worth more. A Time Fish adds seconds to the clock.', 'Land fish in a row to build your combo. Letting one escape loses it.', 'Steer around the jellyfish: a shock can knock fish off your line.'],
+  },
 
   mount(ctx) {
     const { h, el } = ctx;
@@ -21,9 +26,11 @@ ClubDojoMinigames.register({
     // Depth 0..1 maps to the height of the canvas. Depth 0 is out of the water.
     const WATER = 0.12; // depth where the surface is (same as the server)
     const hookY = (d) => 0.1 + d * 0.85;
-    const W = 800; // logical canvas size; the backing store is scaled for sharp HiDPI drawing
-    const H = 450;
-    const SURFACE = hookY(WATER) * H;
+    let W = 800; // logical canvas size: resized to fill the screen; the backing store is scaled for sharp drawing
+    let H = 450;
+    let SURFACE = hookY(WATER) * H;
+    let DX = 0; // how far the pier and angler shift right on a wide screen
+    let scale = 1;
     const TICK_MS = 1000 / 15;
 
     // ---- saved progress (best score, best combo, species caught) ----
@@ -39,16 +46,16 @@ ClubDojoMinigames.register({
     function writeSave() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* storage blocked */ } }
 
     const style = h('style', {}, `
-      .fi { display: flex; flex-direction: column; align-items: center; gap: 8px; height: 100%; padding: 8px; box-sizing: border-box; }
-      .fi-hud { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 18px; font-family: var(--display); font-size: 22px; }
+      .fi { position: absolute; inset: 0; overflow: hidden; }
+      .fi-hud { position: absolute; top: 8px; left: 0; right: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 18px; font-family: var(--display); font-size: 24px; color: #fff; text-shadow: 0 2px 3px rgba(0,30,60,.75); pointer-events: none; z-index: 1; }
       .fi-hud b { color: var(--gold); }
       .fi-hud .fi-low b { color: #ff6b5e; }
       .fi-hud .fi-combo b { color: #7fe3ff; }
-      .fi-canvas { width: 100%; max-width: 800px; height: auto; aspect-ratio: 800 / 450; border-radius: 14px; touch-action: none; cursor: crosshair; user-select: none; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+      .fi-canvas { touch-action: none; cursor: crosshair; user-select: none; }
       .fi-canvas.fi-grab { cursor: pointer; }
-      .fi-status { font-family: var(--display); font-size: 20px; min-height: 28px; text-align: center; }
-      .fi-journal { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; font-size: 13px; }
-      .fi-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; background: rgba(0,0,0,.18); }
+      .fi-status { position: absolute; bottom: 40px; left: 0; right: 0; font-family: var(--display); font-size: 20px; text-align: center; color: #fff; text-shadow: 0 2px 3px rgba(0,20,40,.8); pointer-events: none; z-index: 1; }
+      .fi-journal { position: absolute; bottom: 8px; left: 0; right: 0; pointer-events: none; z-index: 1; color: #fff; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; font-size: 13px; }
+      .fi-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; background: rgba(0,0,0,.4); }
       .fi-chip i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
       .fi-chip.fi-new { outline: 2px solid var(--gold); }
       .fi-chip.fi-unknown { opacity: .55; }
@@ -65,7 +72,7 @@ ClubDojoMinigames.register({
     const status = h('div', { class: 'fi-status' }, 'Move the mouse to steer the bobber...');
     const journalEl = h('div', { class: 'fi-journal', title: 'Your catch journal (all rounds on this computer)' });
     const canvas = h('canvas', { class: 'fi-canvas', width: W, height: H });
-    el.append(style, h('div', { class: 'fi' }, hud, canvas, status, journalEl));
+    el.append(style, h('div', { class: 'fi' }, canvas, hud, status, journalEl));
     const g = canvas.getContext('2d');
 
     const timers = new Set();
@@ -188,9 +195,9 @@ ClubDojoMinigames.register({
     let seed = 7;
     const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
     const clouds = Array.from({ length: 5 }, () => ({ x: rnd() * W, y: 10 + rnd() * 34, s: 0.6 + rnd() * 0.7, v: 4 + rnd() * 6 }));
-    const weeds = Array.from({ length: 14 }, () => ({ x: rnd() * W, h: 40 + rnd() * 70, c: rnd() < 0.5 ? '#2e8b57' : '#3fa66a', p: rnd() * 6 }));
-    const rocks = Array.from({ length: 8 }, () => ({ x: rnd() * W, r: 10 + rnd() * 22, c: rnd() < 0.5 ? '#5a6b7a' : '#6f7f8c' }));
-    const rays = Array.from({ length: 5 }, () => ({ x: rnd() * W, w: 40 + rnd() * 60, p: rnd() * 6 }));
+    const weeds = Array.from({ length: 22 }, () => ({ x: rnd(), h: 40 + rnd() * 70, c: rnd() < 0.5 ? '#2e8b57' : '#3fa66a', p: rnd() * 6 }));
+    const rocks = Array.from({ length: 12 }, () => ({ x: rnd(), r: 10 + rnd() * 22, c: rnd() < 0.5 ? '#5a6b7a' : '#6f7f8c' }));
+    const rays = Array.from({ length: 7 }, () => ({ x: rnd(), w: 40 + rnd() * 60, p: rnd() * 6 }));
 
     // ---- particles ----
     function burst(x, y, n, opts) {
@@ -268,7 +275,7 @@ ClubDojoMinigames.register({
     // ---- drawing ----
     // Where the rod tip is. The line runs from here to the bobber.
     const ROD_TIP = { x: 0.64 * W, y: 0.03 * H };
-    const PIER_Y = 76;
+    let PIER_Y = 76;
 
     function drawBackground(t) {
       // sky
@@ -295,7 +302,7 @@ ClubDojoMinigames.register({
       for (let x = 0; x <= W * 0.6; x += 20) g.lineTo(x, SURFACE - 10 - Math.sin(x / 70) * 6 - Math.sin(x / 23) * 2);
       g.lineTo(W * 0.6, SURFACE); g.closePath(); g.fill();
       g.fillStyle = '#2f6b4f';
-      for (let i = 0; i < 9; i++) {
+      for (let i = 0; i < Math.ceil((W * 0.56) / 52); i++) {
         const x = 30 + i * 52, b = SURFACE - 12, s = 8 + (i % 3) * 3;
         g.beginPath(); g.moveTo(x, b - s * 2.2); g.lineTo(x - s, b); g.lineTo(x + s, b); g.closePath(); g.fill();
       }
@@ -314,8 +321,9 @@ ClubDojoMinigames.register({
         grad.addColorStop(0, 'rgba(180,230,255,.13)'); grad.addColorStop(1, 'rgba(180,230,255,0)');
         g.fillStyle = grad;
         g.beginPath();
-        g.moveTo(r.x, SURFACE); g.lineTo(r.x + r.w, SURFACE);
-        g.lineTo(r.x + r.w * 1.8 + sway, H * 0.85); g.lineTo(r.x + r.w * 0.6 + sway, H * 0.85);
+        const rx = r.x * W;
+        g.moveTo(rx, SURFACE); g.lineTo(rx + r.w, SURFACE);
+        g.lineTo(rx + r.w * 1.8 + sway, H * 0.85); g.lineTo(rx + r.w * 0.6 + sway, H * 0.85);
         g.closePath(); g.fill();
       }
       g.restore();
@@ -332,14 +340,14 @@ ClubDojoMinigames.register({
       g.beginPath(); g.moveTo(0, H);
       for (let x = 0; x <= W; x += 20) g.lineTo(x, sandY + Math.sin(x / 60) * 5);
       g.lineTo(W, H); g.closePath(); g.fill();
-      for (const r of rocks) { g.fillStyle = r.c; g.beginPath(); g.ellipse(r.x, sandY + 6, r.r, r.r * 0.6, 0, Math.PI, 0); g.fill(); }
+      for (const r of rocks) { g.fillStyle = r.c; g.beginPath(); g.ellipse(r.x * W, sandY + 6, r.r, r.r * 0.6, 0, Math.PI, 0); g.fill(); }
       g.lineCap = 'round';
       for (const w of weeds) {
         g.strokeStyle = w.c; g.lineWidth = 5;
-        g.beginPath(); g.moveTo(w.x, sandY + 4);
+        g.beginPath(); g.moveTo(w.x * W, sandY + 4);
         for (let k = 1; k <= 6; k++) {
           const yy = sandY + 4 - (w.h * k) / 6;
-          g.lineTo(w.x + Math.sin(t / 700 + w.p + k * 0.7) * k * 2.2, yy);
+          g.lineTo(w.x * W + Math.sin(t / 700 + w.p + k * 0.7) * k * 2.2, yy);
         }
         g.stroke();
       }
@@ -365,30 +373,30 @@ ClubDojoMinigames.register({
     function drawPier() {
       // posts into the water, then the deck
       g.fillStyle = '#5c3a1e';
-      for (const px of [575, 660, 760]) g.fillRect(px, PIER_Y, 9, SURFACE - PIER_Y + 26);
+      for (const px of [575, 660, 760]) g.fillRect(px + DX, PIER_Y, 9, SURFACE - PIER_Y + 26);
       g.fillStyle = 'rgba(0,0,0,.18)';
-      for (const px of [575, 660, 760]) g.fillRect(px, SURFACE, 9, 26);
+      for (const px of [575, 660, 760]) g.fillRect(px + DX, SURFACE, 9, 26);
       g.fillStyle = '#9a6634';
-      g.fillRect(560, PIER_Y, W - 560, 10);
+      g.fillRect(560 + DX, PIER_Y, W - 560 - DX, 10);
       g.fillStyle = '#7d5128';
-      for (let x = 560; x < W; x += 30) g.fillRect(x, PIER_Y, 2, 10);
+      for (let x = 560 + DX; x < W; x += 30) g.fillRect(x, PIER_Y, 2, 10);
       g.fillStyle = '#6b4226';
-      g.fillRect(560, PIER_Y + 10, W - 560, 3);
+      g.fillRect(560 + DX, PIER_Y + 10, W - 560 - DX, 3);
     }
 
     // The player's own ninja sits on the pier holding the rod.
     function drawAngler(t) {
-      let hand = { x: 628, y: 58 };
+      let hand = { x: 628 + DX, y: PIER_Y - 18 };
       try {
         if (ctx.avatar && me && me.loadout) {
-          const geo = ctx.avatar.draw(g, me.loadout, { x: 650, y: PIER_Y, size: 50, facing: -1, time: t / 1000, shadow: false });
+          const geo = ctx.avatar.draw(g, me.loadout, { x: 650 + DX, y: PIER_Y, size: 50, facing: -1, time: t / 1000, shadow: false });
           if (geo) hand = { x: geo.cx - geo.bw * 0.45, y: geo.top + geo.bh * 0.6 };
         } else throw new Error('no avatar');
       } catch (e) {
         // fallback ninja
         g.fillStyle = '#20262e';
-        g.beginPath(); g.ellipse(650, PIER_Y - 28, 20, 28, 0, 0, Math.PI * 2); g.fill();
-        g.fillStyle = '#e8453c'; g.fillRect(630, PIER_Y - 48, 40, 6);
+        g.beginPath(); g.ellipse(650 + DX, PIER_Y - 28, 20, 28, 0, 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#e8453c'; g.fillRect(630 + DX, PIER_Y - 48, 40, 6);
       }
       // rod: hand to tip, bending a little when fish are on
       const load = state ? state.fish.filter((f) => f.hooked).length : 0;
@@ -407,7 +415,7 @@ ClubDojoMinigames.register({
 
     function drawFish(x, y, kind, dir, t, hooked, glow) {
       const st = FISH_STYLE[kind] || FISH_STYLE.minnow;
-      const len = st.len * W;
+      const len = st.len * 800;
       const cx = x * W;
       const cy = y * H + Math.sin(t / 180 + x * 10) * (hooked ? 0 : 3);
       const wag = Math.sin(t / (hooked ? 60 : 140) + x * 20) * (hooked ? 0.35 : 0.18);
@@ -571,7 +579,7 @@ ClubDojoMinigames.register({
     }
 
     function render(t, dt) {
-      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.setTransform(scale, 0, 0, scale, 0, 0);
       if (shake > 0) {
         g.translate((Math.random() - 0.5) * shake * 10, (Math.random() - 0.5) * shake * 10);
         shake = Math.max(0, shake - dt * 2.5);
@@ -604,10 +612,12 @@ ClubDojoMinigames.register({
       }
     }
 
-    // Sharp drawing on HiDPI screens: the backing store matches the device pixels.
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    canvas.width = W * dpr;
-    canvas.height = H * dpr;
+    ctx.fit(canvas, 800, 450, (f) => {
+      W = f.w; H = f.h; scale = f.scale; DX = W - 800;
+      SURFACE = hookY(WATER) * H;
+      PIER_Y = SURFACE - 15;
+      ROD_TIP.x = 0.64 * 800 + DX; ROD_TIP.y = PIER_Y - 62;
+    });
 
     function frame(t) {
       if (unmounted) return;
