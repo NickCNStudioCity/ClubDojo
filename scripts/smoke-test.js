@@ -105,6 +105,29 @@ const expectError = async (p, code) => {
     await kai.waitFor((m) => m.t === 'player:join' && m.player.name === 'Mika', 2000, 'Mika join');
   });
 
+  await check('first login of the day pays a streak reward and lists daily challenges', async () => {
+    const st = await kai.waitFor((m) => m.t === 'progress' && m.kind === 'streak', 3000, 'streak reward');
+    assert(st.streak === 1 && st.day === 1 && st.coins === 20 && st.week.length === 7, `streak ${JSON.stringify(st)}`);
+    const you = await kai.waitFor((m) => m.t === 'you' && m.ninja.daily && m.ninja.daily.streak === 1, 3000, 'daily summary');
+    assert(you.ninja.daily.challenges.length === 3, 'three daily challenges');
+    assert(you.ninja.beltTest && you.ninja.beltTest.belt === 'yellow' && !you.ninja.beltTest.ready, 'belt test summary');
+  });
+
+  await check('daily challenge rules: rotation, progress, streak gaps', async () => {
+    const pr = require('../server/src/progress');
+    const games = [{ id: 'fishing', name: 'Fishing' }, { id: 'soccer', name: 'Soccer' }];
+    const days = new Set(['2026-11-01', '2026-11-02', '2026-11-03', '2026-11-04'].map((d) => pr.challengesFor(d, games).map((c) => c.id).join()));
+    assert(days.size > 1, 'challenges change from day to day');
+    const st = pr.parse('{}');
+    assert(pr.claimLogin(st, '2026-11-01').coins === 20 && pr.claimLogin(st, '2026-11-01') === null, 'one claim a day');
+    assert(pr.claimLogin(st, '2026-11-02').streak === 2 && pr.claimLogin(st, '2026-11-05').streak === 1 && st.bestStreak === 2, 'gap resets the streak');
+    const day = '2026-11-01';
+    const feat = pr.challengesFor(day, games).find((c) => c.game);
+    const done = pr.track(st, day, games, { type: 'play', game: feat.game, won: false });
+    assert(done.some((c) => c.id === feat.id) && st.challengesDone >= 1, 'featured game completes');
+    assert(!pr.track(st, day, games, { type: 'play', game: feat.game }).some((c) => c.id === feat.id), 'pays once');
+  });
+
   await check('duplicate username and bad words are refused', async () => {
     const dup = new Client('dup', 'player'); await dup.open(); await dup.hello();
     await expectError(dup.req('register', { username: 'KAI', password: 'secret1', name: 'Other', color: P.NINJA_COLORS[0] }), 'username');
@@ -154,6 +177,7 @@ const expectError = async (p, code) => {
     await kai.req('portal');
     const e = await kai.waitFor((m) => m.t === 'room:enter' && m.room.id === 'dojo', 2000, 'dojo enter');
     assert(e.room.name === 'Main Dojo', 'dojo name');
+    assert(e.room.portals[0].label === 'Forest Village', `door label ${e.room.portals[0].label}`);
     await mika.waitFor((m) => m.t === 'player:leave' && m.id === e.you, 2000, 'Kai leaves plaza');
     const w = await admin.waitFor((m) => m.t === 'admin:world' && m.rooms.find((r) => r.id === 'dojo').players.length === 1, 2000, 'admin world push');
     assert(w.rooms.find((r) => r.id === 'dojo').players[0].name === 'Kai', 'admin sees Kai in dojo');
@@ -176,9 +200,10 @@ const expectError = async (p, code) => {
   await check('admin gives coins and sets a belt; the player sees it', async () => {
     const { players } = await admin.req('admin:players', { text: 'kai' });
     const id = players[0].id;
+    const before = (await admin.req('admin:player', { id })).ninja;
     await admin.req('admin:give', { id, coins: 50, xp: 120 });
-    const you = await kai.waitFor((m) => m.t === 'you' && m.ninja.coins === 150, 2000, 'coins update');
-    assert(you.ninja.xp === 120, 'xp');
+    const you = await kai.waitFor((m) => m.t === 'you' && m.ninja.coins === before.coins + 50, 2000, 'coins update');
+    assert(you.ninja.xp === before.xp + 120, 'xp');
     await admin.req('admin:setBelt', { id, belt: 'yellow' });
     await kai.waitFor((m) => m.t === 'you' && m.ninja.belt === 'yellow', 2000, 'belt update');
   });
@@ -285,7 +310,7 @@ const expectError = async (p, code) => {
     assert(r1.name === 'Ren' && r1.place === 1 && r1.score === show1.data.sequence.length, `ren result ${JSON.stringify(r1)}`);
     assert(r1.coins === r1.score * 2 + 10 && r1.xp === r1.score + 10, 'reward formula with win bonus');
     assert(res.results[1].name === 'Aya' && res.results[1].score === 0, 'aya result');
-    await ren.waitFor((m) => m.t === 'you' && m.ninja.coins === 100 + r1.coins, 2000, 'coins saved');
+    await ren.waitFor((m) => m.t === 'you' && m.ninja.coins >= 120 + r1.coins, 2000, 'coins saved'); // 100 start + 20 daily reward
     const mg = await admin.req('admin:minigames');
     assert(mg.games.find((g) => g.id === 'dojo-memory').top[0].name === 'Ren', 'leaderboard');
     const stats = (await ren.req('mg:list')).stats.find((x) => x.game_id === 'dojo-memory');
@@ -329,6 +354,23 @@ const expectError = async (p, code) => {
     await ren.req('mg:leave');
     await new Promise((r) => setTimeout(r, 1100)); // let the flood guard reset; other messages are dropped until then
     await ren.req('move', { x: 10, y: 17 }); // would fail with 'busy' if still in the lobby
+  });
+
+  await check('Sensei Oru gives belt tests; the village hears about it', async () => {
+    await expectError(ren.req('belt:test'), 'far');
+    const id = (await admin.req('admin:players', { text: 'ren' })).players[0].id;
+    await admin.req('admin:give', { id, xp: 100 });
+    await admin.req('admin:teleport', { id, roomId: 'dojo' });
+    await ren.waitFor((m) => m.t === 'room:enter' && m.room.id === 'dojo', 2000, 'ren to dojo');
+    await ren.req('move', { x: 19, y: 6 });
+    const r = await ren.req('belt:test');
+    assert(r.belt === 'yellow' && r.coins === 50, `test ${JSON.stringify(r)}`);
+    const c = await aya.waitFor((m) => m.t === 'celebrate', 2000, 'celebrate');
+    assert(c.name === 'Ren' && c.beltName === 'Yellow Belt', 'celebration');
+    await ren.waitFor((m) => m.t === 'you' && m.ninja.belt === 'yellow' && m.ninja.beltTest.belt === 'orange', 2000, 'promoted');
+    await expectError(ren.req('belt:test'), 'not_ready');
+    await admin.req('admin:teleport', { id, roomId: 'plaza' });
+    await ren.waitFor((m) => m.t === 'room:enter' && m.room.id === 'plaza', 2000, 'ren back');
   });
 
   ren.close(); aya.close();
