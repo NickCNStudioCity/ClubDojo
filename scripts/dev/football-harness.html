@@ -1,0 +1,95 @@
+<!doctype html>
+<!-- Dev only: runs the Football server rules in the browser and mounts the real client, so the
+     stadium can be checked without a server, login or pavilion.
+     Open with: node scripts/dev-web.js, then http://localhost:5173/scripts/dev/football-harness.html
+     Options: ?players=<1-4> adds ninjas played by a script; the page exposes window.__fb for testing. -->
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Football harness</title>
+  <link rel="stylesheet" href="../../shared/client/styles.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: #1b2430; color: #fff; font-family: system-ui, sans-serif; }
+    #stage { position: relative; height: 100vh; }
+  </style>
+  <script src="../../shared/protocol.js"></script>
+  <script src="../../shared/client/avatar.js"></script>
+</head>
+<body>
+  <div id="stage"></div>
+  <script>
+  (async function () {
+    const h = (tag, attrs, ...kids) => {
+      const el = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs || {})) {
+        if (v == null || v === false) continue;
+        if (k === 'class') el.className = v;
+        else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+        else el.setAttribute(k, v === true ? '' : v);
+      }
+      for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
+      return el;
+    };
+
+    const src = await (await fetch('../../server/src/minigames/games/football.js')).text();
+    const mod = { exports: {} };
+    new Function('module', 'exports', src)(mod, mod.exports);
+    const game = mod.exports;
+
+    let clientDef = null;
+    window.ClubDojoMinigames = { register: (d) => { clientDef = d; } };
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = '../../shared/client/minigames/games/football.js';
+      s.onload = resolve; s.onerror = reject; document.head.append(s);
+    });
+
+    const q = new URLSearchParams(location.search);
+    const count = Math.max(1, Math.min(4, Number(q.get('players') || 1)));
+    const looks = [
+      { color: '#2f6fd1', headband: '#f5b82e', belt: 'yellow', accessories: {} },
+      { color: '#1f6f5c', headband: '#e8453c', belt: 'green', accessories: {} },
+      { color: '#7b3fa0', headband: '#ffffff', belt: 'blue', accessories: {} },
+      { color: '#b3541e', headband: '#20262e', belt: 'brown', accessories: {} },
+    ];
+    const players = looks.slice(0, count).map((l, i) => ({ id: i + 1, name: ['You', 'Kai', 'Mika', 'Ren'][i], loadout: { v: 1, id: i + 1, name: 'n', ...l } }));
+    const log = [];
+    let client = null;
+    let server = null;
+    const start = performance.now();
+    const sctx = {
+      game: game.id, settings: { ...game.defaults }, players,
+      isPlaying: () => true,
+      send: () => {},
+      broadcast: (data) => {
+        const copy = JSON.parse(JSON.stringify(data));
+        log.push(copy);
+        if (client) client.onMessage(copy);
+        if (data.type === 'turn' && data.id !== 1 && data.id !== '__bot') scripted(data.id);
+      },
+      after: (ms, fn) => setTimeout(fn, ms),
+      every: (ms, fn) => setInterval(fn, ms),
+      cancel: (t) => { clearTimeout(t); clearInterval(t); },
+      now: () => performance.now() - start,
+      randomInt: (n) => Math.floor(Math.random() * n),
+      end: (results) => { window.__results = results; console.log('round ended', results); },
+      log: console.log,
+    };
+    function scripted(id) {
+      setTimeout(() => server.input(id, { type: 'press' }), 700);
+      setTimeout(() => server.input(id, { type: 'press' }), 700 + 450);
+      setTimeout(() => server.input(id, { type: 'press' }), 700 + 450 + 520);
+    }
+    server = game.create(sctx);
+    client = clientDef.mount({
+      el: document.getElementById('stage'), youId: 1, players, h, avatar: window.ClubDojoAvatar,
+      toast: (m) => console.log('toast', m), protocol: window.ClubDojoProtocol,
+      send: (data) => server.input(1, data),
+    });
+    server.start();
+    window.__fb = { server, client, players, log, game };
+  })().catch((e) => { document.body.textContent = e.stack; });
+  </script>
+</body>
+</html>

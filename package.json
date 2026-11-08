@@ -15,6 +15,7 @@
     "smoke": "node scripts/smoke-test.js",
     "check:minigames": "node scripts/check-minigames.js",
     "check:basketball": "node scripts/check-basketball.js",
+    "check:football": "node scripts/check-football.js",
     "check:mode7": "node scripts/check-mode7.js",
     "release": "node scripts/build-release.js"
   },
