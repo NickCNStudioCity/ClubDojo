@@ -92,23 +92,33 @@ async function checkForUpdate({ kind, target, repo = DEFAULT_REPO, stateFile, fo
   return { status: 'staged', asset, newFile, dest, target };
 }
 
-// Starts a detached Windows script that waits for this process to exit, moves the new file over
+// Starts a hidden Windows script that waits for this process to exit, moves the new file over
 // the old one (retrying while Windows still holds it), and starts it again unless relaunch is false.
 // The caller must quit next.
+// The wait loop writes tasklist's output to a file instead of piping it into find: in the spawned
+// script that pipe never closed, so find waited forever and the update never installed. It also
+// gives up waiting after about two minutes and lets the move loop take over.
 function applyUpdate(staged, { args = [], relaunch = true } = {}) {
   const { newFile, dest, target } = staged;
   const log = path.join(os.tmpdir(), 'clubdojo-update.log');
   const launchArgs = args.map((a) => `"${a}"`).join(' ');
-  const script = path.join(os.tmpdir(), `clubdojo-update-${process.pid}-${Date.now()}.cmd`);
+  const base = path.join(os.tmpdir(), `clubdojo-update-${process.pid}-${Date.now()}`);
+  const script = `${base}.cmd`;
+  const check = `${base}.txt`;
   fs.writeFileSync(script, [
     '@echo off',
     `set "PID=${process.pid}"`,
+    'set /a WAITS=0',
     ':waitexit',
-    'tasklist /FI "PID eq %PID%" 2>nul | find "%PID%" >nul',
-    'if not errorlevel 1 (',
+    'set /a WAITS+=1',
+    `tasklist /FI "PID eq %PID%" /NH /FO CSV >"${check}" 2>nul`,
+    // CSV rows look like "ClubDojo.exe","1996",... so match the quoted PID exactly.
+    `"%SystemRoot%\\System32\\find.exe" ",""%PID%""," "${check}" >nul 2>&1`,
+    'if not errorlevel 1 if %WAITS% LSS 120 (',
     '  ping -n 2 127.0.0.1 >nul',
     '  goto waitexit',
     ')',
+    `del /F /Q "${check}" >nul 2>&1`,
     'set /a TRIES=0',
     ':move',
     'set /a TRIES+=1',
@@ -127,7 +137,22 @@ function applyUpdate(staged, { args = [], relaunch = true } = {}) {
     '(goto) 2>nul & del "%~f0"',
     '',
   ].join('\r\n'));
-  spawn('cmd.exe', ['/d', '/c', script], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  // A detached cmd.exe has no console, so every tasklist, find and ping it ran opened a window of
+  // its own. wscript (no console) starts cmd in one hidden console instead, then exits.
+  // Without Windows Script Host it falls back to the detached cmd (works, just with windows).
+  const wscript = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'wscript.exe');
+  if (fs.existsSync(wscript)) {
+    const launcher = `${base}.vbs`;
+    // UTF-16 with a BOM so wscript reads paths with non-ASCII characters (user names) correctly.
+    fs.writeFileSync(launcher, '\ufeff' + [
+      `CreateObject("WScript.Shell").Run "cmd.exe /d /c """"${script}""""", 0, False`,
+      'CreateObject("Scripting.FileSystemObject").DeleteFile WScript.ScriptFullName',
+      '',
+    ].join('\r\n'), 'utf16le');
+    spawn(wscript, ['//B', '//Nologo', launcher], { detached: true, stdio: 'ignore' }).unref();
+  } else {
+    spawn('cmd.exe', ['/d', '/c', script], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  }
 }
 
 module.exports = { DEFAULT_REPO, fetchLatest, checkForUpdate, applyUpdate, sha256File };
