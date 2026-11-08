@@ -2,57 +2,19 @@
 // The server simulates every kart; clients only send steering and pedal states.
 // Score: 10 points for each racer you beat, +5 for crossing the finish line.
 // Guide: docs/minigames/README.md
-const TRACK_SAMPLES = 36;
-const TRACK_HALF_WIDTH = 52; // road half-width in world pixels
-const WALL_MARGIN = 30;      // how far past the road edge a kart can drift before it is pushed back
-const KART_RADIUS = 12;
-const GRID_GAP = 34;         // spacing of the starting grid
-const WORLD_W = 1000;
-const WORLD_H = 640;
-
-// Closed loop built from a radius function. Points are generated once, in order.
-function buildTrack() {
-  const pts = [];
-  for (let k = 0; k < TRACK_SAMPLES; k++) {
-    const a = (Math.PI * 2 * k) / TRACK_SAMPLES;
-    const r = 200 + 55 * Math.sin(2 * a) + 25 * Math.cos(3 * a);
-    pts.push({ x: Math.round(500 + 1.35 * r * Math.cos(a)), y: Math.round(320 + r * Math.sin(a)) });
-  }
-  const seg = [];
-  const cum = [0];
-  for (let i = 0; i < pts.length; i++) {
-    const a = pts[i];
-    const b = pts[(i + 1) % pts.length];
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const len = Math.hypot(dx, dy);
-    seg.push({ dx, dy, len, len2: len * len });
-    cum.push(cum[i] + len);
-  }
-  return { pts, seg, length: cum[pts.length], cum };
-}
-
-const TRACK = buildTrack();
-
-// Nearest point on the centerline: distance, track position s (0..length), and the outward normal.
-function nearest(x, y) {
-  let best = null;
-  for (let i = 0; i < TRACK.pts.length; i++) {
-    const a = TRACK.pts[i];
-    const sg = TRACK.seg[i];
-    const t = Math.max(0, Math.min(1, ((x - a.x) * sg.dx + (y - a.y) * sg.dy) / sg.len2));
-    const px = a.x + sg.dx * t;
-    const py = a.y + sg.dy * t;
-    const d2 = (x - px) ** 2 + (y - py) ** 2;
-    if (!best || d2 < best.d2) best = { d2, i, t, px, py };
-  }
-  const d = Math.sqrt(best.d2);
-  const nx = d > 1e-6 ? (x - best.px) / d : 0;
-  const ny = d > 1e-6 ? (y - best.py) / d : -1;
-  return { d, s: TRACK.cum[best.i] + best.t * TRACK.seg[best.i].len, px: best.px, py: best.py, nx, ny };
-}
+// Track geometry lives in a shared module so the client's Mode 7 renderer uses the same numbers.
+const {
+  TRACK, HALF_WIDTH: TRACK_HALF_WIDTH, WALL_MARGIN, KART_RADIUS, WORLD, nearest, gridSlot,
+} = require('../../../../shared/client/minigames/games/go-kart-mode7/track');
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// Physics always advances in fixed steps, so the simulation does not depend on timer jitter.
+const STEP = 1 / 60;
+// Snapshots go to clients every 3rd physics step (20 Hz). Positions are all clients need.
+const SNAPSHOT_EVERY = 3;
+// Cap on catch-up work after a stall, so one slow tick cannot trigger a long burst of steps.
+const MAX_ACCUM = 0.25;
 
 module.exports = {
   id: 'go-kart-race',
@@ -62,7 +24,8 @@ module.exports = {
   maxPlayers: 4,
   color: '#d35400',
   icon: '🏎️',
-  tickRate: 20,
+  // The engine calls tick() at this rate; tick() then runs fixed physics steps (see STEP below).
+  tickRate: 60,
 
   defaults: { laps: 3, timeLimitMs: 120000, maxSpeed: 330, offroadSpeed: 150, accel: 300, brake: 380, turnRate: 2.4 },
 
@@ -81,17 +44,15 @@ module.exports = {
     let phase = 'idle';
     let ended = false;
     let timeTimer = null;
+    let accum = 0;      // unsimulated time, in seconds
+    let stepCount = 0;  // physics steps run so far
 
     ctx.players.forEach((p, i) => {
       // Grid: every racer starts just behind the start line, staggered.
-      const back = i * GRID_GAP + 12;
-      const dir = TRACK.seg[0];
-      const len = Math.hypot(dir.dx, dir.dy);
-      const x = TRACK.pts[0].x - (dir.dx / len) * back;
-      const y = TRACK.pts[0].y - (dir.dy / len) * back;
+      const { x, y, h, back } = gridSlot(i);
       const info = nearest(x, y);
       karts.set(p.id, {
-        id: p.id, color: colors[i], x, y, h: Math.atan2(dir.dy, dir.dx), v: 0,
+        id: p.id, color: colors[i], x, y, h, v: 0,
         lastS: info.s, p: -back, finished: false, off: false, active: true,
       });
       ctrl.set(p.id, { steer: 0, gas: false, brake: false });
@@ -201,12 +162,19 @@ module.exports = {
       }
     }
 
+    // One fixed physics step for every racer.
+    function stepWorld(dt) {
+      for (const k of activeRacers()) if (!k.finished) stepKart(k, dt);
+      separate();
+      maybeEnd();
+    }
+
     return {
       start() {
         phase = 'race';
         ctx.broadcast({
           type: 'go', laps: s.laps, timeMs: s.timeLimitMs, length: TRACK.length,
-          track: TRACK.pts, halfWidth: TRACK_HALF_WIDTH, world: { w: WORLD_W, h: WORLD_H },
+          track: TRACK.pts, halfWidth: TRACK_HALF_WIDTH, world: { w: WORLD.w, h: WORLD.h },
           karts: ctx.players.map((p) => ({ id: p.id, color: karts.get(p.id).color })),
         });
         ctx.broadcast({ type: 'state', t: ctx.now(), karts: snapshot() });
@@ -226,11 +194,15 @@ module.exports = {
 
       tick(dt) {
         if (phase !== 'race' || ended) return;
-        for (const k of activeRacers()) if (!k.finished) stepKart(k, dt);
-        separate();
-        maybeEnd();
-        // Snapshots at tick rate are small (4 karts), so send them each tick.
-        ctx.broadcast({ type: 'state', t: ctx.now(), karts: snapshot() });
+        accum = Math.min(accum + dt, MAX_ACCUM);
+        while (accum >= STEP && !ended) {
+          accum -= STEP;
+          stepWorld(STEP);
+          stepCount++;
+          if (stepCount % SNAPSHOT_EVERY === 0 && !ended) {
+            ctx.broadcast({ type: 'state', t: ctx.now(), karts: snapshot() });
+          }
+        }
       },
 
       leave(id) {
