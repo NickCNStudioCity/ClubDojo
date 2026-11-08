@@ -55,4 +55,4 @@ Decision: keep the server authoritative and replace only the client renderer wit
 - Snapshot rate: the current server tick may be too slow for smooth Mode 7 motion. Decide after milestone 2.
 - Whether the existing 4-player limit stays (the outline assumes it does).
 - Whether the top-down view is kept as a toggle for debugging.
-- Wall contact (server): a kart pressed into the wall with the gas held is pinned at about 5 speed, and turns very slowly because steering grip scales with speed. Seen while testing milestone 5. Not changed yet, since it is server physics.
+- ✅ Wall contact (server): a kart pressed into the wall with the gas held used to be pinned at about 5 speed (half its speed lost on every physics step) and could barely turn. Now a wall hit costs speed once, by how square it was, and turns the kart to run along the wall; a square hit slides the way you steer, or on along the track. Steering keeps at least 35% grip at low speed. Checks: `npm run check:mode7` (kart physics at the wall).

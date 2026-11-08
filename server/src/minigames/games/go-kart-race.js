@@ -15,6 +15,20 @@ const STEP = 1 / 60;
 const SNAPSHOT_EVERY = 3;
 // Cap on catch-up work after a stall, so one slow tick cannot trigger a long burst of steps.
 const MAX_ACCUM = 0.25;
+// Steering grip at low speed (fraction of full grip), so a slow kart can still turn.
+const MIN_GRIP = 0.35;
+// Wall contact: share of speed lost on a square hit (less for glancing ones), and how close to
+// square (sine of the angle off square, about 3°) counts as square, where the slide direction
+// comes from the steering instead of the approach angle.
+const WALL_SCRUB = 0.6;
+const WALL_SQUARE = 0.05;
+
+// Index of the track segment that contains distance s along the centreline.
+function nearestSeg(s) {
+  let i = 0;
+  while (i < TRACK.seg.length - 1 && TRACK.cum[i + 1] <= s) i++;
+  return i;
+}
 
 module.exports = {
   id: 'go-kart-race',
@@ -131,7 +145,8 @@ module.exports = {
       if (before.d > TRACK_HALF_WIDTH) k.v = Math.min(k.v, s.offroadSpeed);
 
       if (Math.abs(k.v) > 5) {
-        const grip = clamp(Math.abs(k.v) / 200, 0, 1);
+        // Grip grows with speed, with a floor so a slow kart (say, just off a wall) can still turn.
+        const grip = clamp(Math.abs(k.v) / 200, MIN_GRIP, 1);
         k.h += c.steer * s.turnRate * grip * Math.sign(k.v) * dt;
       }
       k.x += Math.cos(k.h) * k.v * dt;
@@ -140,11 +155,30 @@ module.exports = {
       const after = nearest(k.x, k.y);
       k.off = after.d > TRACK_HALF_WIDTH;
       if (after.d > TRACK_HALF_WIDTH + WALL_MARGIN) {
-        // Hit the outer wall: snap back to the edge and lose speed.
+        // Hit the wall: snap back to the edge. Speed and heading change once, by the impact angle,
+        // so a kart slides along the wall instead of losing half its speed on every step.
         const edge = TRACK_HALF_WIDTH + WALL_MARGIN;
         k.x = after.px + after.nx * edge;
         k.y = after.py + after.ny * edge;
-        k.v *= 0.5;
+        const dir = Math.sign(k.v);
+        const mx = Math.cos(k.h) * dir, my = Math.sin(k.h) * dir; // direction of travel
+        const into = mx * after.nx + my * after.ny;              // 1 = head-on, 0 = alongside
+        if (into > 0) {
+          // Turn to run along the wall, losing speed by how square the hit was. A near-square hit
+          // goes the way the driver is steering, or on along the track if they are not.
+          let tx = mx - into * after.nx, ty = my - into * after.ny;
+          if (Math.hypot(tx, ty) < WALL_SQUARE) {
+            const sideX = -after.ny, sideY = after.nx; // one way along the wall
+            const seg = TRACK.seg[nearestSeg(after.s)];
+            let way = c.steer ? Math.sign(c.steer) * Math.sign(mx * sideY - my * sideX)
+              : Math.sign(sideX * seg.dx + sideY * seg.dy) * dir;
+            if (!way) way = 1;
+            tx = sideX * way; ty = sideY * way;
+          }
+          const along = Math.atan2(ty, tx);
+          k.h = dir > 0 ? along : along + Math.PI;
+          k.v *= 1 - WALL_SCRUB * into;
+        }
       }
 
       // Progress is measured along the centerline, so cutting across the infield gains nothing.
