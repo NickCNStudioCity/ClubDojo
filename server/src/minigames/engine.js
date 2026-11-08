@@ -188,7 +188,7 @@ function createEngine({ db, registry, sendTo, toRoom, onRewarded, log = () => {}
       r.name = l.players.get(r.id).loadout.name;
       db.recordMinigameScore(r.id, l.game.id, r.score, r.place, rows.length);
       if (r.coins || r.xp) db.addRewards(r.id, r.coins, r.xp);
-      onRewarded(r.id);
+      onRewarded(r.id, { game: l.game.id, place: r.place, score: r.score, players: rows.length });
     }
     log(`[minigame] ${l.game.id} at ${l.key} finished: ${rows.map((r) => `${r.name}=${r.score}`).join(', ')}`);
     l.phase = 'results';
