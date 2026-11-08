@@ -5,6 +5,7 @@
   const WALK_SPEED = 6.5; // tiles per second
   const BUBBLE_MS = 6000;
   const EMOTE_MS = 2500;
+  const TITLE_MS = 2600; // room name card after walking through a door
 
   const COVERING_PROPS = new Set(['forest', 'mountains', 'building', 'wall', 'counter', 'table', 'tree', 'dummy', 'npc']);
 
@@ -141,13 +142,282 @@
     }
   }
 
-  function drawTiles(ctx, room, T, time) {
-    const floor = floorOf(room);
-    const covered = coverMap(room);
+  function drawTiles(ctx, room, T, time, cache) {
+    const floor = cache ? cache.floor : floorOf(room);
+    const covered = cache ? cache.covered : coverMap(room);
     for (let y = 0; y < room.height; y++) {
       const row = room.tiles[y];
       for (let x = 0; x < room.width; x++) drawTile(ctx, row[x], x, y, T, time, floor, covered.has(y * room.width + x));
     }
+  }
+
+  // ---------- Scenery around the room ----------
+  // The room is fitted inside the window, so a margin is usually left on two sides. Fill it
+  // with scenery that matches the room (forest, snow, rock or dark walls), and carry exit
+  // paths out to the screen edge so they read as "the path continues this way".
+  function themeOf(room, floor) {
+    if (room.theme) return room.theme;
+    if (/cave/i.test(room.id) || /cave/i.test(room.name)) return 'rock';
+    if (floor === ',' || floor === '=') return 'indoor';
+    if (floor === '.' || floor === '*') return 'snow';
+    return 'forest';
+  }
+
+  const SURROUND = {
+    forest: { base: '#2a5f45', dark: '#1f4a36', mid: '#2f6d4f', light: '#3f8a5a' },
+    snow: { base: '#e3f0f6', dark: '#c9dfea', mid: '#d6e8f1', light: '#ffffff' },
+    rock: { base: '#24212a', dark: '#1a181f', mid: '#33303a', light: '#423e4a' },
+    indoor: { base: '#1c120e', dark: '#140c09', mid: '#2a1a13', light: '#3a2419' },
+  };
+
+  function drawSurroundings(ctx, room, T, time, view, theme, cache) {
+    const c = SURROUND[theme] || SURROUND.forest;
+    const { x0, y0, x1, y1 } = view;
+    if (x0 >= -1 && y0 >= -1 && x1 <= room.width + 1 && y1 <= room.height + 1) return; // no margin to fill
+    ctx.fillStyle = c.base;
+    ctx.fillRect(x0 * T, y0 * T, (x1 - x0) * T, (y1 - y0) * T);
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        if (x >= 0 && y >= 0 && x < room.width && y < room.height) continue;
+        const n = hash(x + 911, y + 377);
+        const px = x * T, py = y * T;
+        if (theme === 'forest') {
+          if (n < 0.62) {
+            const r = T * (0.55 + n * 0.5);
+            ctx.fillStyle = c.dark;
+            ctx.beginPath(); ctx.arc(px + T * 0.5, py + T * 0.62, r, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = n < 0.3 ? c.mid : c.light;
+            ctx.beginPath(); ctx.arc(px + T * 0.42, py + T * 0.45, r * 0.62, 0, Math.PI * 2); ctx.fill();
+          }
+        } else if (theme === 'snow') {
+          if (n < 0.4) {
+            ctx.fillStyle = c.dark;
+            roundRect(ctx, px + T * 0.05, py + T * 0.3, T * 0.9, T * 0.6, T * 0.3); ctx.fill();
+            ctx.fillStyle = c.light;
+            roundRect(ctx, px + T * 0.15, py + T * 0.2, T * 0.55, T * 0.35, T * 0.18); ctx.fill();
+          }
+        } else if (theme === 'rock') {
+          if (n < 0.5) {
+            ctx.fillStyle = n < 0.25 ? c.mid : c.light;
+            ctx.beginPath();
+            ctx.moveTo(px + T * 0.1, py + T * 0.9); ctx.lineTo(px + T * (0.3 + n * 0.4), py + T * 0.15); ctx.lineTo(px + T * 0.95, py + T * 0.85);
+            ctx.closePath(); ctx.fill();
+          }
+        } else {
+          // Dark timber outside the walls: long planks with a few seams.
+          ctx.fillStyle = c.mid;
+          ctx.fillRect(px, py + T - Math.max(1, T * 0.06), T + 0.5, Math.max(1, T * 0.06));
+          if (n < 0.18) ctx.fillRect(px, py, Math.max(1, T * 0.05), T);
+        }
+      }
+    }
+    // Paths keep going past the edge of the room for exits on the border.
+    for (const p of room.portals || []) {
+      const edge = portalEdge(room, p);
+      if (!edge) continue;
+      const w = p.w || 1, h = p.h || 1;
+      const ch = room.tiles[p.y] && room.tiles[p.y][p.x];
+      const tile = theme === 'indoor' ? null : (P.TILES[ch] && P.TILES[ch].walkable ? ch : ':');
+      const run = [];
+      if (edge === 'left') for (let x = x0; x < 0; x++) for (let j = 0; j < h; j++) run.push([x, p.y + j]);
+      if (edge === 'right') for (let x = room.width; x < x1; x++) for (let j = 0; j < h; j++) run.push([x, p.y + j]);
+      if (edge === 'up') for (let y = y0; y < 0; y++) for (let i = 0; i < w; i++) run.push([p.x + i, y]);
+      if (edge === 'down') for (let y = room.height; y < y1; y++) for (let i = 0; i < w; i++) run.push([p.x + i, y]);
+      if (tile) for (const [x, y] of run) drawTile(ctx, tile, x, y, T, time, cache ? cache.floor : 'g', false);
+      else {
+        // Doorways out of a building: warm daylight spilling in from outside.
+        const ex = edge === 'left' ? x0 * T : edge === 'right' ? room.width * T : p.x * T;
+        const ey = edge === 'up' ? y0 * T : edge === 'down' ? room.height * T : p.y * T;
+        const ew = edge === 'left' || edge === 'right' ? Math.abs((edge === 'left' ? 0 : x1) - (edge === 'left' ? x0 : room.width)) * T : w * T;
+        const eh = edge === 'up' || edge === 'down' ? Math.abs((edge === 'up' ? 0 : y1) - (edge === 'up' ? y0 : room.height)) * T : h * T;
+        ctx.fillStyle = 'rgba(255,226,160,.55)';
+        ctx.fillRect(ex, ey, ew, eh);
+      }
+    }
+  }
+
+  // A soft shadow just outside the room border so the playable area reads clearly.
+  function drawRoomEdge(ctx, room, T) {
+    const W = room.width * T, H = room.height * T, s = T * 0.6;
+    const sides = [
+      [0, -s, W, s, 0, 0, 0, -s], [0, H, W, s, 0, H, 0, H + s],
+      [-s, 0, s, H, 0, 0, -s, 0], [W, 0, s, H, W, 0, W + s, 0],
+    ];
+    for (const [x, y, w, h, gx0, gy0, gx1, gy1] of sides) {
+      const g = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
+      g.addColorStop(0, 'rgba(0,0,0,.28)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x, y, w, h);
+    }
+  }
+
+  // Which border of the room a portal sits on, or null for a door inside the room. With
+  // slack, a gate a few tiles in from the border (the Sports Park gate) counts too.
+  function portalEdge(room, p, slack = 0) {
+    const w = p.w || 1, h = p.h || 1;
+    if (p.x <= slack) return 'left';
+    if (p.x + w >= room.width - slack) return 'right';
+    if (p.y <= slack) return 'up';
+    if (p.y + h >= room.height - slack) return 'down';
+    return null;
+  }
+  const SIGN_SLACK = 3;
+
+  // Exit sign for a portal on the room border: bouncing chevrons and a name tag, always shown.
+  function drawExitSign(ctx, p, edge, T, time, hot) {
+    const w = (p.w || 1) * T, h = (p.h || 1) * T;
+    const cx = p.x * T + w / 2, cy = p.y * T + h / 2;
+    const dir = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] }[edge];
+    const bob = (Math.sin(time / 260) + 1) * T * 0.08;
+    ctx.save();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(2, T * 0.1);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (let i = 0; i < 2; i++) {
+      const k = i * T * 0.28 + bob;
+      const ax = cx + dir[0] * k, ay = cy + dir[1] * k, s = T * 0.2;
+      ctx.globalAlpha = hot ? 1 : 0.55 + i * 0.3;
+      ctx.beginPath();
+      ctx.moveTo(ax - dir[0] * s - dir[1] * s, ay - dir[1] * s - dir[0] * s);
+      ctx.lineTo(ax, ay);
+      ctx.lineTo(ax - dir[0] * s + dir[1] * s, ay - dir[1] * s + dir[0] * s);
+      ctx.stroke();
+    }
+    ctx.restore();
+    const arrow = { left: '◀ ', right: '', up: '▲ ', down: '▼ ' }[edge];
+    const text = `${arrow}${p.label || 'Exit'}${edge === 'right' ? ' ▶' : ''}`;
+    const opts = { bg: hot ? 'rgba(245,184,46,.98)' : 'rgba(20,32,44,.78)', color: hot ? '#1b2a36' : '#fff', scale: 0.46 };
+    ctx.font = `700 ${Math.max(10, T * opts.scale)}px Nunito, "Segoe UI", sans-serif`;
+    const tw = ctx.measureText(text).width + T * 0.4;
+    let lx = cx, ly = cy - T * 0.3;
+    if (edge === 'left') lx = p.x * T + w + T * 0.3 + tw / 2;
+    if (edge === 'right') lx = p.x * T - T * 0.3 - tw / 2;
+    if (edge === 'down') ly = p.y * T - T * 1.0;
+    if (edge === 'up') ly = p.y * T + h + T * 0.35;
+    drawLabel(ctx, text, lx, ly, T, opts);
+  }
+
+  // ---------- Time of day ----------
+  // Outdoor rooms follow the host clock: golden morning, bright day, warm dusk, blue night.
+  // Indoors stays lamp-lit; the cave is always dim.
+  function lightingFor(theme, hour) {
+    if (theme === 'indoor') return { dark: 0, warm: 0.08, night: false };
+    if (theme === 'rock') return { dark: 0.42, warm: 0, night: true };
+    let dark = 0, warm = 0;
+    if (hour >= 21 || hour < 5) dark = 1;
+    else if (hour >= 17.5) { const k = (hour - 17.5) / 3.5; dark = k * k; warm = Math.sin(k * Math.PI) * 0.9 + (k < 0.3 ? 0.3 : 0); }
+    else if (hour < 7.5) { const k = 1 - (hour - 5) / 2.5; dark = k * k; warm = Math.sin(k * Math.PI) * 0.7; }
+    return { dark: dark * 0.5, warm, night: dark > 0.45 };
+  }
+  function timeOfDayName(hour, theme) {
+    if (theme === 'indoor') return 'Lanterns lit, tea is warm';
+    if (theme === 'rock') return 'Mind your step in the dark';
+    if (hour >= 21 || hour < 5) return 'Night falls on the village';
+    if (hour >= 17.5) return 'Evening';
+    if (hour < 7.5) return 'Dawn';
+    if (hour < 11) return 'Morning';
+    return 'Afternoon';
+  }
+
+  function drawLighting(ctx, room, T, time, view, light) {
+    const { x0, y0, x1, y1 } = view;
+    const X = x0 * T, Y = y0 * T, W = (x1 - x0) * T, H = (y1 - y0) * T;
+    if (light.warm > 0) { ctx.fillStyle = `rgba(255,150,70,${0.13 * light.warm})`; ctx.fillRect(X, Y, W, H); }
+    if (light.dark <= 0) return;
+    ctx.fillStyle = `rgba(14,22,62,${light.dark})`;
+    ctx.fillRect(X, Y, W, H);
+    // Light sources glow through the dark.
+    const k = Math.min(1, light.dark / 0.5);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const glow = (gx, gy, r, a) => {
+      const g = ctx.createRadialGradient(gx, gy, 1, gx, gy, r);
+      g.addColorStop(0, `rgba(255,190,90,${a})`); g.addColorStop(1, 'rgba(255,190,90,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(gx, gy, r, 0, Math.PI * 2); ctx.fill();
+    };
+    for (const p of room.props || []) {
+      if (p.type === 'lantern') {
+        const f = 0.85 + Math.sin(time / 180 + p.x * 1.7) * 0.1;
+        glow((p.x + 0.5) * T, p.y * T - T * 0.6, T * 3.2, 0.32 * k * f);
+      } else if (p.type === 'building') {
+        const w = (p.w || 1) * T;
+        glow(p.x * T + T * 1.45, p.y * T + T * 2.65, T * 1.6, 0.3 * k);
+        glow(p.x * T + w - T * 1.45, p.y * T + T * 2.65, T * 1.6, 0.3 * k);
+        glow(p.x * T + w / 2, (p.y + (p.h || 1)) * T, T * 2, 0.22 * k);
+      }
+    }
+    for (const sp of room.minigames || []) glow((sp.x + 1.5) * T, (sp.y + 1) * T, T * 2.2, 0.18 * k);
+    ctx.restore();
+  }
+
+  // ---------- Ambient particles ----------
+  // Falling leaves and petals by day, fireflies at night, dust motes indoors and in the cave.
+  // Kept in tile units; purely cosmetic and local to this window.
+  const LEAF_COLORS = ['#7cc35a', '#e8a33c', '#d9653b', '#ffb7d5', '#f5d33b'];
+  function updateParticles(world, dt) {
+    const room = world.room;
+    const list = world.particles || (world.particles = []);
+    const light = lightingFor(world.theme, world.hour());
+    const kind = world.theme === 'indoor' || world.theme === 'rock' ? 'dust' : world.theme === 'snow' ? 'snow' : light.night ? 'firefly' : 'leaf';
+    const max = kind === 'snow' ? 60 : kind === 'firefly' ? 34 : kind === 'dust' ? 26 : 22;
+    const rate = kind === 'snow' ? 14 : kind === 'leaf' ? 3 : 6;
+    world.spawnAcc = (world.spawnAcc || 0) + dt * rate;
+    while (world.spawnAcc >= 1) {
+      world.spawnAcc -= 1;
+      if (list.length >= max) break;
+      const r = Math.random;
+      if (kind === 'leaf' || kind === 'snow') {
+        list.push({ kind, x: r() * (room.width + 6) - 6, y: -1 - r() * 2, vx: 0.5 + r() * 0.6, vy: kind === 'snow' ? 0.9 + r() * 0.8 : 0.7 + r() * 0.6,
+          spin: r() * Math.PI * 2, vs: (r() - 0.5) * 5, c: LEAF_COLORS[Math.floor(r() * LEAF_COLORS.length)], size: 0.12 + r() * 0.1, life: 0, max: 30 });
+      } else {
+        list.push({ kind, x: r() * room.width, y: 3 + r() * (room.height - 3), vx: (r() - 0.5) * 0.4, vy: kind === 'dust' ? -0.05 - r() * 0.1 : (r() - 0.5) * 0.4,
+          life: 0, max: 4 + r() * 4, phase: r() * 10, size: kind === 'dust' ? 0.04 + r() * 0.04 : 0.07 + r() * 0.05 });
+      }
+    }
+    for (let i = list.length - 1; i >= 0; i--) {
+      const p = list[i];
+      p.life += dt;
+      if (p.kind === 'leaf' || p.kind === 'snow') {
+        p.x += (p.vx + Math.sin(p.life * 2 + p.spin) * 0.6) * dt; p.y += p.vy * dt; p.spin += p.vs * dt;
+        if (p.y > room.height + 1 || p.x > room.width + 6) list.splice(i, 1);
+      } else {
+        if (p.kind === 'firefly') { p.vx += (Math.random() - 0.5) * dt * 1.2; p.vy += (Math.random() - 0.5) * dt * 1.2; p.vx *= 0.98; p.vy *= 0.98; }
+        p.x += p.vx * dt; p.y += p.vy * dt;
+        if (p.life > p.max) list.splice(i, 1);
+      }
+    }
+  }
+
+  function drawParticles(ctx, list, T, time, light) {
+    if (!list || !list.length) return;
+    ctx.save();
+    for (const p of list) {
+      const fade = p.max ? Math.min(1, p.life / 0.8, (p.max - p.life) / 0.8) : 1;
+      if (p.kind === 'leaf') {
+        ctx.globalAlpha = 0.85 * Math.min(1, p.life);
+        ctx.fillStyle = p.c;
+        ctx.beginPath(); ctx.ellipse(p.x * T, p.y * T, T * p.size, T * p.size * 0.45 * Math.abs(Math.cos(p.spin)) + 0.5, p.spin, 0, Math.PI * 2); ctx.fill();
+      } else if (p.kind === 'snow') {
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.arc(p.x * T, p.y * T, T * p.size * 0.6, 0, Math.PI * 2); ctx.fill();
+      } else if (p.kind === 'firefly') {
+        const pulse = 0.5 + Math.sin(time / 300 + p.phase) * 0.5;
+        ctx.globalCompositeOperation = 'lighter';
+        const r = T * 0.5;
+        const g = ctx.createRadialGradient(p.x * T, p.y * T, 0, p.x * T, p.y * T, r);
+        g.addColorStop(0, `rgba(230,255,140,${0.8 * pulse * fade})`); g.addColorStop(1, 'rgba(230,255,140,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(p.x * T, p.y * T, r, 0, Math.PI * 2); ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+      } else {
+        ctx.globalAlpha = 0.35 * fade * (light.dark ? 1 : 0.8);
+        ctx.fillStyle = '#ffe7b0';
+        ctx.beginPath(); ctx.arc(p.x * T, p.y * T, T * p.size, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.restore();
   }
 
   function drawPortals(ctx, room, T, time, hoverPortal) {
@@ -625,7 +895,7 @@
     onMouse(e) {
       this.hover = this.tileFromEvent(e);
       const portal = this.hover && P.portalAt(this.room, this.hover.x, this.hover.y);
-      const spot = this.hover && P.spotAt(this.room, this.hover.x, this.hover.y);
+      const spot = this.hover && (P.spotAt(this.room, this.hover.x, this.hover.y) || World.npcAt(this.room, this.hover.x, this.hover.y));
       this.canvas.style.cursor = portal || spot ? 'pointer' : this.hover && P.isWalkable(this.room, this.hover.x, this.hover.y) ? 'crosshair' : 'default';
     }
 
@@ -637,23 +907,35 @@
       this.canvas.height = Math.round(h * dpr);
       this.dpr = dpr;
       if (this.room) {
-        // Cover the window (crop the edges slightly if the aspect differs) so the world fills it like the mockup.
-        const fit = Math.min(w / this.room.width, h / this.room.height);
-        const cover = Math.max(w / this.room.width, h / this.room.height);
-        this.T = Math.min(cover, fit * 1.06);
+        // Fit the whole room in the window whatever its size or shape, so exits on the edges
+        // (the Sports Park gate, the Grotto path) are never cropped. The spare margin is filled
+        // with matching scenery by drawSurroundings, so it does not look letterboxed.
+        this.T = Math.min(w / this.room.width, h / this.room.height);
         this.ox = (w - this.room.width * this.T) / 2;
         this.oy = (h - this.room.height * this.T) / 2;
       }
+      this.vw = w; this.vh = h;
     }
 
-    setRoom(room, players, youId) {
+    setRoom(room, players, youId, opts = {}) {
       this.room = room;
       this.spotStatus = (room && room.spotStatus) || {};
       this.youId = youId;
       this.players.clear();
       for (const p of players) this.addPlayer(p);
       this.marker = null;
+      this.cache = room ? { floor: floorOf(room), covered: coverMap(room) } : null;
+      this.theme = room ? themeOf(room, this.cache.floor) : 'forest';
+      this.particles = [];
+      if (!opts.quiet) this.enteredAt = performance.now();
       this.layout();
+    }
+
+    // Hour of day used for lighting. Tests and screenshots can pin it with world.hourOverride.
+    hour() {
+      if (this.hourOverride != null) return this.hourOverride;
+      const d = new Date();
+      return d.getHours() + d.getMinutes() / 60;
     }
 
     addPlayer(p) {
@@ -724,6 +1006,7 @@
           if (n.id === this.youId && this.handlers.onArrive) this.handlers.onArrive({ x: n.x, y: n.y });
         }
       }
+      if (this.room) updateParticles(this, dt);
     }
 
     draw(now) {
@@ -735,9 +1018,18 @@
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       if (!room) return;
       const T = this.T;
-      ctx.setTransform(this.dpr, 0, 0, this.dpr, this.ox * this.dpr, this.oy * this.dpr);
+      const dpr = this.dpr || 1;
+      ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, this.oy * dpr);
 
-      drawTiles(ctx, room, T, now);
+      // Visible tile range, including the margin around the room.
+      const vw = this.vw || canvas.width / dpr, vh = this.vh || canvas.height / dpr;
+      const view = {
+        x0: Math.floor(-this.ox / T) - 1, y0: Math.floor(-this.oy / T) - 1,
+        x1: Math.ceil((vw - this.ox) / T) + 1, y1: Math.ceil((vh - this.oy) / T) + 1,
+      };
+      drawSurroundings(ctx, room, T, now, view, this.theme, this.cache);
+      drawTiles(ctx, room, T, now, this.cache);
+      drawRoomEdge(ctx, room, T);
       const hoverPortal = this.hover && P.portalAt(room, this.hover.x, this.hover.y);
       drawPortals(ctx, room, T, now, hoverPortal);
 
@@ -778,10 +1070,25 @@
       drawables.sort((a, b) => a.depth - b.depth);
       for (const d of drawables) d.draw(ctx);
 
-      // Overlays above everything: door labels, bubbles, emotes
+      // Time of day, then lights and ambient particles on top of the scene.
+      const light = lightingFor(this.theme, this.hour());
+      drawLighting(ctx, room, T, now, view, light);
+      drawParticles(ctx, this.particles, T, now, light);
+
+      // Overlays above everything: exit signs, door labels, bubbles, emotes
+      for (const p of room.portals || []) {
+        const edge = portalEdge(room, p, SIGN_SLACK);
+        if (edge && p !== hoverPortal) drawExitSign(ctx, p, edge, T, now, false);
+      }
       const hoverSpot = this.hover && P.spotAt(room, this.hover.x, this.hover.y);
+      const hoverNpc = this.hover && World.npcAt(room, this.hover.x, this.hover.y);
       if (hoverSpot) drawLabel(ctx, `Play ${hoverSpot.name || hoverSpot.game}`, (hoverSpot.x + P.MINIGAME_SPOT.w / 2) * T, hoverSpot.y * T - T * 1.7, T, { bg: 'rgba(245,184,46,.95)', color: '#1b2a36' });
-      if (hoverPortal) drawLabel(ctx, `To ${hoverPortal.label}`, (hoverPortal.x + (hoverPortal.w || 1) / 2) * T, hoverPortal.y * T - T * 0.9, T, { bg: 'rgba(245,184,46,.95)', color: '#1b2a36' });
+      if (hoverNpc) drawLabel(ctx, `Talk to ${hoverNpc.name || 'Sensei'}`, (hoverNpc.x + 0.5) * T, hoverNpc.y * T - T * 1.9, T, { bg: 'rgba(245,184,46,.95)', color: '#1b2a36' });
+      if (hoverPortal) {
+        const edge = portalEdge(room, hoverPortal, SIGN_SLACK);
+        if (edge) drawExitSign(ctx, hoverPortal, edge, T, now, true);
+        else drawLabel(ctx, `To ${hoverPortal.label}`, (hoverPortal.x + (hoverPortal.w || 1) / 2) * T, hoverPortal.y * T - T * 0.9, T, { bg: 'rgba(245,184,46,.95)', color: '#1b2a36' });
+      }
       for (const n of this.players.values()) {
         const cx = n.px * T;
         let top = (n._top ?? n.py * T - T) - T * 0.25;
@@ -806,6 +1113,41 @@
             ctx.globalAlpha = 1;
           }
         }
+      }
+
+      // Screen-space finish: a soft vignette, then the fade-in and room title after a door.
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const vg = ctx.createRadialGradient(vw / 2, vh / 2, Math.min(vw, vh) * 0.45, vw / 2, vh / 2, Math.hypot(vw, vh) * 0.6);
+      vg.addColorStop(0, 'rgba(0,0,0,0)');
+      vg.addColorStop(1, 'rgba(0,0,0,.22)');
+      ctx.fillStyle = vg;
+      ctx.fillRect(0, 0, vw, vh);
+      const age = now - (this.enteredAt || -1e9);
+      if (age < 450) {
+        ctx.fillStyle = `rgba(10,16,24,${1 - age / 450})`;
+        ctx.fillRect(0, 0, vw, vh);
+      }
+      if (age < TITLE_MS) {
+        const a = Math.min(1, age / 300) * Math.min(1, (TITLE_MS - age) / 600);
+        const size = Math.max(28, Math.min(72, T * 2));
+        const ty = this.oy + room.height * T * 0.3 - (1 - Math.min(1, age / 400)) * size * 0.3;
+        ctx.globalAlpha = a;
+        ctx.font = `${size}px Bangers, Impact, "Trebuchet MS", sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = size * 0.14;
+        ctx.strokeStyle = 'rgba(20,32,44,.85)';
+        const title = room.name.toUpperCase();
+        ctx.strokeText(title, vw / 2, ty);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(title, vw / 2, ty);
+        ctx.font = `700 ${Math.round(size * 0.28)}px Nunito, "Segoe UI", sans-serif`;
+        const sub = timeOfDayName(this.hour(), this.theme);
+        ctx.lineWidth = size * 0.07;
+        ctx.strokeText(sub, vw / 2, ty + size * 0.62);
+        ctx.fillStyle = '#f5b82e';
+        ctx.fillText(sub, vw / 2, ty + size * 0.62);
+        ctx.globalAlpha = 1;
       }
     }
   }
@@ -851,6 +1193,11 @@
     }
   };
   World.drawNinja = drawNinja;
+  // The NPC standing on a tile (Sensei Oru in the Main Dojo), or null.
+  World.portalEdge = portalEdge;
+  World.npcAt = function (room, x, y) {
+    return (room && room.props || []).find((p) => p.type === 'npc' && p.x === x && p.y === y) || null;
+  };
 
   window.ClubDojoWorld = World;
 })();

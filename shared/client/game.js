@@ -49,6 +49,11 @@
           state.pendingPortal = false;
           conn.request('portal').catch((e) => toast(e.message, true));
         }
+        if (state.pendingNpc) {
+          const npc = state.pendingNpc;
+          state.pendingNpc = null;
+          if (Math.max(Math.abs(npc.x - t.x), Math.abs(npc.y - t.y)) <= 2) openSensei(npc);
+        }
         if (state.pendingSpot) {
           const spot = (state.room.minigames || []).find((sp) => sp.id === state.pendingSpot);
           state.pendingSpot = null;
@@ -78,6 +83,8 @@
     ui.roomName = h('b');
     ui.online = h('small');
     ui.coins = h('b');
+    ui.streak = h('span', { class: 'streak-chip', title: 'Daily login streak', hidden: true });
+    ui.exits = h('nav', { class: 'exits', 'aria-label': 'Exits from this room' });
     ui.chatLog = h('div', { class: 'chat-log', role: 'log', 'aria-label': 'Room chat messages' });
     ui.chatInput = h('input', { type: 'text', placeholder: 'Say something... (Enter)', 'aria-label': 'Chat message', maxlength: P.LIMITS.chatMax });
     ui.minimap = h('canvas', { width: 400, height: 240 });
@@ -100,12 +107,15 @@
         h('div', { class: 'belt-row' }, ui.sash, h('div', {}, ui.beltName, ui.ninjaName)),
         h('div', { class: 'xp', 'aria-hidden': 'true' }, ui.xpFill), ui.xpText),
       h('div', { class: 'panel room-tag', 'aria-label': 'Current room' }, ui.roomName, ui.online),
-      h('button', { class: 'panel minimap-btn', 'aria-label': 'Toggle mini map', onclick: () => { ui.minimapPanel.hidden = !ui.minimapPanel.hidden; drawMinimap(); } }, 'Map'),
+      h('div', { class: 'top-right' },
+        h('button', { class: 'panel minimap-btn', 'aria-label': 'Toggle mini map', onclick: () => { ui.minimapPanel.hidden = !ui.minimapPanel.hidden; drawMinimap(); } }, 'Map'),
+        h('div', { class: 'panel coins', 'aria-label': 'Coins' }, ui.streak, h('span', { class: 'coin', 'aria-hidden': 'true' }), ui.coins)),
       ui.minimapPanel,
-      h('div', { class: 'panel coins', 'aria-label': 'Coins' }, h('span', { class: 'coin', 'aria-hidden': 'true' }), ui.coins),
-      h('button', { class: 'panel quest', 'aria-label': 'Active quest. Open quest log.', onclick: openQuests },
-        h('div', { class: 'label' }, 'Active quest'), h('b', {}, 'Earn your next belt'),
-        ui.questStep = h('div', { class: 'step' }, 'Quests arrive in a coming update')),
+      ui.exits,
+      ui.quest = h('button', { class: 'panel quest', 'aria-label': 'Active quest. Open quest log.', onclick: openQuests },
+        ui.questLabel = h('div', { class: 'label' }, 'Daily challenge'), ui.questTitle = h('b', {}, 'Earn your next belt'),
+        ui.questStep = h('div', { class: 'step' }, ''),
+        h('div', { class: 'qbar', 'aria-hidden': 'true' }, ui.questFill = h('i'))),
       ui.chat,
       ui.emotePop,
       h('nav', { class: 'panel menu', 'aria-label': 'Game menu' },
@@ -123,17 +133,58 @@
       if (next) {
         const pct = Math.max(0, Math.min(100, ((me.xp - belt.xp) / (next.xp - belt.xp)) * 100));
         ui.xpFill.style.width = `${pct}%`;
-        ui.xpText.textContent = me.xp >= next.xp ? `Ready for the ${next.name} test` : `Next: ${next.name}, ${(next.xp - me.xp).toLocaleString()} XP to go`;
+        ui.xpText.textContent = me.xp >= next.xp ? `XP ready for the ${next.name} test` : `Next: ${next.name}, ${(next.xp - me.xp).toLocaleString()} XP to go`;
       } else {
         ui.xpFill.style.width = '100%';
-        ui.xpText.textContent = 'Highest belt. Dan levels coming soon.';
+        ui.xpText.textContent = 'Highest belt. Keep training!';
       }
       ui.coins.textContent = me.coins.toLocaleString();
-      ui.questStep.textContent = next ? `Reach ${next.xp} XP for the ${next.name}` : 'You have mastered the belts';
+      const daily = me.daily;
+      ui.streak.hidden = !(daily && daily.streak > 0);
+      if (daily) ui.streak.textContent = `🔥 ${daily.streak}`;
+      // Quest card: a ready belt test comes first, then the next unfinished daily challenge.
+      const test = me.beltTest;
+      const open = daily ? daily.challenges.filter((c) => !c.done) : [];
+      ui.quest.classList.toggle('ready', !!(test && test.ready));
+      if (test && test.ready) {
+        ui.questLabel.textContent = 'Belt test ready';
+        ui.questTitle.textContent = `Take the ${test.name} test`;
+        ui.questStep.textContent = 'Visit Sensei Oru in the Main Dojo';
+        ui.questFill.style.width = '100%';
+      } else if (open.length) {
+        const c = open[0];
+        ui.questLabel.textContent = `Daily challenge · ${daily.challenges.length - open.length}/${daily.challenges.length} done`;
+        ui.questTitle.textContent = c.text;
+        ui.questStep.textContent = `${c.progress}/${c.goal} · reward ${c.coins} coins, ${c.xp} XP`;
+        ui.questFill.style.width = `${(c.progress / c.goal) * 100}%`;
+      } else if (test) {
+        const left = test.reqs.find((r) => r.have < r.need);
+        ui.questLabel.textContent = daily ? 'All daily challenges done!' : 'Belt path';
+        ui.questTitle.textContent = `Next: ${test.name}`;
+        ui.questStep.textContent = left ? `${left.text} (${Math.min(left.have, left.need).toLocaleString()}/${left.need.toLocaleString()})` : 'Visit Sensei Oru';
+        ui.questFill.style.width = `${Math.min(100, (test.reqs.filter((r) => r.have >= r.need).length / test.reqs.length) * 100)}%`;
+      } else {
+        ui.questLabel.textContent = 'Belt path';
+        ui.questTitle.textContent = 'Black Belt master';
+        ui.questStep.textContent = 'New challenges every day';
+        ui.questFill.style.width = '100%';
+      }
     }
     function renderRoomTag() {
       ui.roomName.textContent = state.room ? state.room.name : '';
       ui.online.textContent = `${state.online} online`;
+    }
+    // One button per exit, under the room name. Always reachable, even on a small window.
+    function renderExits() {
+      const portals = (state.room && state.room.portals) || [];
+      ui.exits.replaceChildren(...portals.map((p) => h('button', {
+        class: 'exit-btn', title: `Walk to ${p.label}`,
+        onclick: () => walkTo({ x: p.x + Math.floor(((p.w || 1) - 1) / 2), y: p.y + Math.floor(((p.h || 1) - 1) / 2) }),
+      }, h('span', { 'aria-hidden': 'true' }, exitArrow(p)), p.label)));
+      ui.exits.hidden = !portals.length;
+    }
+    function exitArrow(p) {
+      return { left: '←', right: '→', up: '↑', down: '↓' }[World.portalEdge(state.room, p, 3)] || '⛩';
     }
 
     function drawMinimap() {
@@ -172,6 +223,16 @@
       closeEmotes();
       let target = t;
       state.pendingSpot = null;
+      state.pendingNpc = null;
+      const npc = World.npcAt(state.room, t.x, t.y);
+      if (npc) {
+        // Clicking Sensei walks up to him and opens his dialog on arrival.
+        const me0 = world.players.get(state.me.id);
+        if (me0 && Math.max(Math.abs(npc.x - me0.x), Math.abs(npc.y - me0.y)) <= 2 && !me0.path.length) { openSensei(npc); return; }
+        const near = [[0, 1], [-1, 1], [1, 1], [0, 2], [-1, 0], [1, 0]].map(([dx, dy]) => ({ x: npc.x + dx, y: npc.y + dy }))
+          .find((c) => P.isWalkable(state.room, c.x, c.y) && !P.portalAt(state.room, c.x, c.y));
+        if (near) { state.pendingNpc = npc; t = near; target = near; }
+      }
       const spot = P.spotAt(state.room, t.x, t.y);
       if (spot) {
         // Clicking a pavilion walks to its pad, then joins the lobby on arrival.
@@ -190,9 +251,10 @@
       if (me && me.x === target.x && me.y === target.y && !me.path.length) {
         if (state.pendingPortal) { state.pendingPortal = false; conn.request('portal').catch((e) => toast(e.message, true)); }
         if (state.pendingSpot) { const id = state.pendingSpot; state.pendingSpot = null; minigames.join(id); }
+        if (state.pendingNpc) { const n = state.pendingNpc; state.pendingNpc = null; openSensei(n); }
         return;
       }
-      const failed = (e) => { state.pendingPortal = false; state.pendingSpot = null; world.showMarker(target, false); if (e.code === 'busy') toast(e.message, true); };
+      const failed = (e) => { state.pendingPortal = false; state.pendingSpot = null; state.pendingNpc = null; world.showMarker(target, false); if (e.code === 'busy') toast(e.message, true); };
       conn.request('move', target).catch((e) => {
         // The server still has us in a minigame this window already closed (for example a lost
         // leave message): leave it properly, then walk.
@@ -235,20 +297,84 @@
     }
     function closeModal() { modalWrap.hidden = true; modalWrap.replaceChildren(); modalOpen = false; }
 
+    // Quest log: today's challenges and streak, then the belt path with the next test.
     function openQuests() {
       const me = state.me;
-      const rows = P.BELTS.map((b) => {
-        const done = me.xp >= b.xp && P.BELTS.findIndex((x) => x.id === b.id) <= P.BELTS.findIndex((x) => x.id === me.belt);
-        return h('div', { class: 'objective' },
+      const daily = me.daily;
+      const test = me.beltTest;
+      const curIdx = P.BELTS.findIndex((x) => x.id === me.belt);
+      const challenges = daily ? daily.challenges.map((c) => h('div', { class: `objective${c.done ? ' complete' : ''}` },
+        h('span', { class: `check${c.done ? ' done' : ''}`, 'aria-hidden': 'true' }),
+        h('div', { class: 'grow' }, c.text,
+          h('div', { class: 'meter', 'aria-hidden': 'true' }, h('i', { style: { width: `${(c.progress / c.goal) * 100}%` } })),
+          h('small', { class: 'muted' }, c.done ? 'Done! Reward paid.' : `${c.progress}/${c.goal}`)),
+        h('span', { class: 'reward' }, `+${c.coins}`, h('span', { class: 'coin sm', 'aria-hidden': 'true' })))) : [];
+      const belts = P.BELTS.map((b, i) => {
+        const done = i <= curIdx;
+        const isNext = test && test.belt === b.id;
+        return h('div', { class: `objective${isNext ? ' next' : ''}` },
           h('span', { class: `check${done ? ' done' : ''}`, 'aria-hidden': 'true' }),
           h('span', { class: 'belt-chip', style: { background: b.color } }),
-          h('div', { class: 'grow' }, b.name, h('small', { class: 'muted', style: { display: 'block' } }, b.xp ? `${b.xp} XP plus a belt test` : 'Account creation')),
+          h('div', { class: 'grow' }, b.name,
+            isNext ? h('ul', { class: 'reqs' }, test.reqs.map((r) => h('li', { class: r.have >= r.need ? 'ok' : null },
+              `${r.have >= r.need ? '✓' : '○'} ${r.text} `, h('small', { class: 'muted' }, `${Math.min(r.have, r.need).toLocaleString()}/${r.need.toLocaleString()}`))))
+              : h('small', { class: 'muted', style: { display: 'block' } }, b.xp ? `${b.xp} XP plus a belt test` : 'Account creation')),
           b.id === me.belt ? h('b', {}, 'Current') : null);
       });
-      openModal('Quest log', 'Belt path',
-        h('p', { class: 'muted' }, 'Quest lines and belt tests come in a later update. For now, this is the path from White to Black Belt.'),
-        ...rows,
-        h('div', { class: 'foot' }, h('span', { class: 'muted' }, `You have ${me.xp} XP`), h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
+      openModal('Quest log', 'Daily challenges',
+        h('p', { class: 'muted' }, 'New challenges every day, the same for every ninja in the village.',
+          daily && daily.streak ? ` Login streak: 🔥 ${daily.streak} day${daily.streak === 1 ? '' : 's'}.` : ''),
+        ...challenges,
+        h('h2', { class: 'sub' }, 'Belt path'),
+        h('p', { class: 'muted' }, test ? (test.ready ? `You are ready! Visit Sensei Oru in the Main Dojo to take the ${test.name} test.` : `Meet every step below, then visit Sensei Oru in the Main Dojo.`) : 'You wear the Black Belt. Respect.'),
+        ...belts,
+        h('div', { class: 'foot' }, h('span', { class: 'muted' }, `${me.xp.toLocaleString()} XP · ${daily ? daily.challengesDone : 0} challenges completed`), h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
+    }
+
+    // Sensei Oru: belt tests.
+    function openSensei(npc) {
+      const me = state.me;
+      const test = me.beltTest;
+      const preview = h('canvas', { width: 90, height: 110 });
+      setTimeout(() => { const c = preview.getContext('2d'); World.drawNinja(c, { x: 1.1, y: 2.35, color: '#f3f8fb', headband: '#f5b82e', belt: 'black' }, 40, performance.now()); });
+      const say = !test ? 'You have walked the whole belt path. Now teach the young ones.'
+        : test.ready ? `Your training shows, ${me.name}. Are you ready for the ${test.name} test?`
+          : `Not yet, ${me.name}. A ${test.name} needs more training.`;
+      const reqs = test ? h('ul', { class: 'reqs' }, test.reqs.map((r) => h('li', { class: r.have >= r.need ? 'ok' : null },
+        `${r.have >= r.need ? '✓' : '○'} ${r.text} `, h('small', { class: 'muted' }, `${Math.min(r.have, r.need).toLocaleString()}/${r.need.toLocaleString()}`)))) : null;
+      const go = test && test.ready ? h('button', { class: 'btn', onclick: () => {
+        go.disabled = true;
+        conn.request('belt:test').then((r) => { closeModal(); toast(`Sensei bows. You earned the ${r.name}${r.coins ? ` and ${r.coins} coins` : ''}!`); })
+          .catch((e) => { go.disabled = false; toast(e.message, true); });
+      } }, `Take the ${test.name} test`) : null;
+      openModal('Main Dojo', npc.name || 'Sensei Oru',
+        h('div', { class: 'preview-row' }, preview, h('p', { class: 'sensei-say' }, `“${say}”`)),
+        test ? h('div', { class: 'label', style: { marginTop: '10px' } }, `${test.name} test`) : null, reqs,
+        test && test.coins ? h('p', { class: 'muted' }, `Passing pays ${test.coins} coins, and the whole village will hear of it.`) : null,
+        h('div', { class: 'foot' }, h('button', { class: 'btn ghost', onclick: closeModal }, 'Bow and leave'), go || h('span')));
+    }
+
+    // Login streak reward: a week of stamps, today's highlighted.
+    function showStreak(m) {
+      const days = m.week.map((c, i) => h('div', { class: `stamp${i + 1 < m.day ? ' got' : ''}${i + 1 === m.day ? ' today' : ''}` },
+        h('small', {}, `Day ${i + 1}`), h('b', {}, c), h('span', { class: 'coin sm', 'aria-hidden': 'true' })));
+      openModal('Daily reward', m.streak > 1 ? `${m.streak}-day streak!` : 'Welcome back!',
+        h('p', { class: 'muted' }, m.streak > 1 ? 'Log in every day to keep your streak. Day 7 pays the most.' : 'Log in tomorrow to start a streak. Day 7 pays the most.'),
+        h('div', { class: 'week' }, days),
+        h('p', { class: 'streak-pay' }, `+${m.coins} coins · +${m.xp} XP`),
+        h('div', { class: 'foot' }, h('span', { class: 'muted' }, 'Three new daily challenges are waiting in the Quest log.'), h('button', { class: 'btn', onclick: closeModal }, 'Collect')));
+      confetti(28);
+    }
+
+    // A burst of paper confetti over the window.
+    function confetti(n, colors) {
+      const box = h('div', { class: 'confetti', 'aria-hidden': 'true' });
+      const pal = colors || ['#e8453c', '#f5b82e', '#3fbf7f', '#2f6fd1', '#ff7eb6', '#ffffff'];
+      for (let i = 0; i < n; i++) {
+        box.append(h('i', { style: { left: `${Math.random() * 100}%`, background: pal[i % pal.length], '--dx': `${(Math.random() - 0.5) * 160}px`, '--r': `${Math.random() * 720 - 360}deg`, animationDelay: `${Math.random() * 0.4}s`, animationDuration: `${1.6 + Math.random() * 1.2}s` } }));
+      }
+      win.append(box);
+      setTimeout(() => box.remove(), 3400);
     }
 
     function openNinja() {
@@ -342,9 +468,11 @@
     // ---------- server events ----------
     conn.on('room:enter', (m) => {
       state.room = m.room;
-      world.setRoom(m.room, m.players, m.you);
+      world.setRoom(m.room, m.players, m.you, { quiet: !!m.updated });
       state.pendingPortal = false;
+      state.pendingNpc = null;
       renderRoomTag();
+      renderExits();
       drawMinimap();
       if (m.updated) toast(`${m.room.name} was just updated by a Grandmaster`);
       else chatLine(`You entered ${m.room.name}.`, 'sys');
@@ -370,9 +498,26 @@
       const before = state.me;
       state.me = m.ninja;
       renderHud();
-      if (before && before.belt !== m.ninja.belt) toast(`You earned the ${P.beltById(m.ninja.belt).name}!`);
-      else if (before && m.ninja.coins > before.coins) toast(`+${m.ninja.coins - before.coins} coins`);
+      if (before && before.belt !== m.ninja.belt) { /* the celebrate event shows the banner */ }
+      else if (before && before.beltTest && m.ninja.beltTest && !before.beltTest.ready && m.ninja.beltTest.ready) toast(`Belt test unlocked! Visit Sensei Oru in the Main Dojo.`);
+      else if (before && m.ninja.coins > before.coins && !(performance.now() < (state.quietCoinsUntil || 0))) toast(`+${m.ninja.coins - before.coins} coins`);
       emit('me', state.me);
+    });
+    conn.on('progress', (m) => {
+      state.quietCoinsUntil = performance.now() + 1500;
+      if (m.kind === 'streak') showStreak(m);
+      else if (m.kind === 'challenge') {
+        const t = h('div', { class: 'toast win' }, h('small', {}, 'Daily challenge complete'), m.text, h('span', { class: 'toast-pay' }, `+${m.coins} coins · +${m.xp} XP`));
+        toasts.append(t);
+        setTimeout(() => t.remove(), 4200);
+        confetti(18);
+      }
+    });
+    conn.on('celebrate', (m) => {
+      const you = state.me && m.id === state.me.id;
+      showBanner(you ? `You earned the ${m.beltName}!` : `${m.name} earned the ${m.beltName}!`, 'Sensei Oru');
+      chatLine(`🥋 ${m.name} passed the ${m.beltName} test!`, 'ann');
+      confetti(you ? 60 : 24, [m.color, '#f5b82e', '#ffffff', m.color]);
     });
     conn.on('kicked', (m) => { state.kickReason = m.reason; });
     conn.on('_close', () => {

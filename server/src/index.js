@@ -12,6 +12,7 @@ const DB = require('./db');
 const filter = require('./filter');
 const minigameRegistry = require('./minigames/registry');
 const { createEngine } = require('./minigames/engine');
+const progress = require('./progress');
 const updater = require('../../shared/updater');
 
 const JOIN_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -99,7 +100,11 @@ function start(options = {}) {
     registry: minigameRegistry,
     sendTo: (accountId, msg) => { const t = byAccount.get(accountId); if (t) send(t, msg); },
     toRoom: (roomId, msg) => toRoom(roomId, msg),
-    onRewarded: (accountId) => refreshOnline(accountId),
+    onRewarded: (accountId, info) => {
+      const s = onlineSession(accountId);
+      if (s && info) trackEvent(s, { type: 'play', game: info.game, won: info.place === 1 && info.score > 0 }, { push: false });
+      refreshOnline(accountId);
+    },
     log,
   });
 
@@ -114,7 +119,56 @@ function start(options = {}) {
       id: s.account.id, username: s.account.username, role: s.account.role, name: s.ninja.name,
       belt: s.ninja.belt, xp: s.ninja.xp, coins: s.ninja.coins, color: s.ninja.color, headband: s.ninja.headband,
       mutedUntil: s.account.muted_until,
+      daily: progress.summary(progressOf(s), progress.dayKey(), challengeGames()),
+      beltTest: progress.beltTest(s.ninja, beltRecord(s)),
     };
+  }
+
+  // ---------- progression: daily streak, daily challenges, belt tests ----------
+  // Minigames that can be a "featured game" challenge: installed and placed on a map.
+  function challengeGames() {
+    const placed = new Set();
+    for (const r of rooms.values()) for (const sp of r.minigames || []) placed.add(sp.game);
+    return minigameRegistry.list().filter((g) => g.available && placed.has(g.id));
+  }
+  function progressOf(s) { return progress.parse(s.ninja.progress); }
+  function saveProgress(s, state) {
+    const json = JSON.stringify(state);
+    s.ninja.progress = json;
+    db.updateNinja(s.account.id, { progress: json });
+  }
+  function beltRecord(s) {
+    const r = db.progressRecord(s.account.id);
+    const st = progressOf(s);
+    return { plays: r.plays, distinct: r.distinct_games, wins: r.wins, challenges: st.challengesDone, bestStreak: st.bestStreak };
+  }
+  // Count something the ninja did toward today's challenges and pay out any it completes.
+  function trackEvent(s, ev, { push = true } = {}) {
+    if (!s.account || !s.ninja) return;
+    const state = progressOf(s);
+    const before = JSON.stringify(state);
+    const done = progress.track(state, progress.dayKey(), challengeGames(), ev);
+    if (JSON.stringify(state) === before) return;
+    saveProgress(s, state);
+    for (const c of done) {
+      db.addRewards(s.account.id, c.coins, c.xp);
+      send(s, { t: 'progress', kind: 'challenge', text: c.text, coins: c.coins, xp: c.xp });
+      log(`[daily] ${s.account.username} completed "${c.text}"`);
+    }
+    if (done.length) refreshOnline(s.account.id);
+    else if (push) pushYou(s);
+  }
+  // First visit of the day: extend the login streak and pay the daily reward.
+  function claimDaily(s) {
+    if (!s.account || !s.ninja) return;
+    const state = progressOf(s);
+    const reward = progress.claimLogin(state, progress.dayKey());
+    if (!reward) return;
+    saveProgress(s, state);
+    db.addRewards(s.account.id, reward.coins, reward.xp);
+    s.ninja = db.getNinja(s.account.id);
+    const target = s;
+    setTimeout(() => { if (target.account) { send(target, { t: 'progress', kind: 'streak', ...reward }); pushYou(target); } }, 900);
   }
   function roomPayload(room) {
     const { id, name, width, height, tiles, portals, props, spawn, version } = room;
@@ -123,7 +177,8 @@ function start(options = {}) {
       const g = info.get(sp.game) || {};
       return { ...sp, name: g.name || sp.game, color: g.color || '#7a3b2e', icon: g.icon || '🥋' };
     });
-    return { id, name, width, height, tiles, portals, props, spawn, version, minigames: spots, spotStatus: minigames.spotStatus(id) };
+    const doors = (portals || []).map((p) => (rooms.has(p.to) ? { ...p, label: rooms.get(p.to).name } : p));
+    return { id, name, width, height, tiles, portals: doors, props, spawn, version, minigames: spots, spotStatus: minigames.spotStatus(id) };
   }
   function worldSnapshot() {
     return {
@@ -173,6 +228,7 @@ function start(options = {}) {
     send(s, { t: 'room:enter', room: roomPayload(room), you: s.account.id, players: inRoom(room.id).map(publicPlayer) });
     toRoom(room.id, { t: 'player:join', player: publicPlayer(s) }, s);
     presenceChanged();
+    trackEvent(s, { type: 'visit', room: room.id });
   }
 
   function leaveWorld(s) {
@@ -233,6 +289,7 @@ function start(options = {}) {
     db.updateAccount(account.id, { last_login_at: Date.now() });
     db.logLogin(account.id, account.username, true, s.ip, s.client);
     log(`[login] ${account.username} (${account.role}) via ${s.client} from ${s.ip}`);
+    claimDaily(s);
     enterRoom(s, s.ninja.room_id, s.ninja.x, s.ninja.y);
     return { ninja: privateNinja(s) };
   }
@@ -325,11 +382,15 @@ function start(options = {}) {
       const clean = filter.clean(text);
       db.logChat(s.roomId, s.account.id, s.ninja.name, text);
       toRoom(s.roomId, { t: 'chat', id: s.account.id, name: s.ninja.name, role: s.account.role, text: clean, at: now });
+      trackEvent(s, { type: 'chat' });
     },
 
     emote(s, m) {
       if (!P.EMOTES[m.emote]) fail('bad', 'Unknown emote.');
       toRoom(s.roomId, { t: 'player:emote', id: s.account.id, emote: m.emote });
+      // A bow only counts toward "bow to another ninja" when someone else is in the room.
+      if (m.emote !== 'bow' || inRoom(s.roomId).length > 1) trackEvent(s, { type: 'emote', emote: m.emote });
+      else trackEvent(s, { type: 'emote', emote: 'bow-alone' });
     },
 
     setLook(s, m) {
@@ -349,6 +410,23 @@ function start(options = {}) {
     },
 
     ping() { return { at: Date.now() }; },
+
+    // Belt test with Sensei Oru: stand next to him in the Main Dojo with the XP and the
+    // test's requirements met. Promotes one belt and tells the whole village.
+    'belt:test'(s) {
+      const room = rooms.get(s.roomId);
+      const sensei = (room.props || []).find((p) => p.type === 'npc' && Math.max(Math.abs(p.x - s.x), Math.abs(p.y - s.y)) <= 2);
+      if (!sensei) fail('far', 'Find Sensei Oru in the Main Dojo to take your belt test.');
+      const test = progress.beltTest(s.ninja, beltRecord(s));
+      if (!test) fail('max', 'You already wear the Black Belt.');
+      if (!test.ready) fail('not_ready', `Not yet. ${test.reqs.filter((r) => r.have < r.need).map((r) => r.text).join(', ')}.`);
+      db.updateNinja(s.account.id, { belt: test.belt });
+      if (test.coins) db.addRewards(s.account.id, test.coins, 0);
+      refreshOnline(s.account.id, { lookChanged: true });
+      toAll({ t: 'celebrate', id: s.account.id, name: s.ninja.name, belt: test.belt, beltName: test.name, color: test.color });
+      log(`[belt] ${s.account.username} passed the ${test.name} test`);
+      return { belt: test.belt, name: test.name, coins: test.coins };
+    },
 
     // ---------- minigames ----------
     // Every installed and planned game, where its spots are, and how full each lobby is.
@@ -649,6 +727,8 @@ function start(options = {}) {
   });
 
   const ticker = setInterval(() => { for (const s of sessions) s.msgCount = 0; }, 1000);
+  // Ninjas who stay online past midnight still get the next day's streak reward.
+  const dailyTimer = setInterval(() => { for (const s of authed()) claimDaily(s); }, 60 * 1000);
   const heartbeat = setInterval(() => {
     const now = Date.now();
     for (const s of sessions) {
@@ -710,7 +790,7 @@ function start(options = {}) {
     get online() { return authed().length; },
     ready: new Promise((resolve, reject) => { wss.once('listening', resolve); wss.once('error', reject); }),
     close() {
-      clearInterval(ticker); clearInterval(heartbeat); clearInterval(discoveryTimer); clearTimeout(presenceTimer);
+      clearInterval(ticker); clearInterval(dailyTimer); clearInterval(heartbeat); clearInterval(discoveryTimer); clearTimeout(presenceTimer);
       minigames.shutdown();
       for (const s of sessions) { savePosition(s); s.account = null; s.ws.terminate(); }
       closed = true;

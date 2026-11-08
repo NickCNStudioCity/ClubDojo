@@ -71,6 +71,8 @@ function open(dataDir) {
   // Columns added after v1.0.0.
   const ninjaCols = q('PRAGMA table_info(ninjas)').all().map((c) => c.name);
   if (!ninjaCols.includes('accessories')) db.exec("ALTER TABLE ninjas ADD COLUMN accessories TEXT NOT NULL DEFAULT '{}'");
+  // Daily streak, daily challenges and lifetime challenge count (server/src/progress.js).
+  if (!ninjaCols.includes('progress')) db.exec("ALTER TABLE ninjas ADD COLUMN progress TEXT NOT NULL DEFAULT '{}'");
 
   // Seed rooms on first run, and upgrade starter rooms when the seed changes
   // (for example the v1.1 forest hub). The old layout stays in room_versions.
@@ -117,6 +119,12 @@ function open(dataDir) {
       return q(`SELECT n.name, MAX(s.score) AS score, COUNT(*) AS plays FROM minigame_scores s JOIN ninjas n ON n.account_id = s.account_id
                 WHERE s.game_id = ? GROUP BY s.account_id ORDER BY score DESC LIMIT ?`).all(gameId, limit || 10);
     },
+    // Totals the belt tests read: rounds played, different games played, and first places
+    // with a score above zero.
+    progressRecord(accountId) {
+      return q(`SELECT COUNT(*) AS plays, COUNT(DISTINCT game_id) AS distinct_games, COALESCE(SUM(place = 1 AND score > 0), 0) AS wins
+                FROM minigame_scores WHERE account_id = ?`).get(accountId);
+    },
     minigameStats(accountId) {
       return q('SELECT game_id, COUNT(*) AS plays, MAX(score) AS best, SUM(place = 1) AS wins FROM minigame_scores WHERE account_id = ? GROUP BY game_id').all(accountId);
     },
@@ -154,7 +162,7 @@ function open(dataDir) {
       q('UPDATE ninjas SET room_id = ?, x = ?, y = ? WHERE account_id = ?').run(roomId, x, y, accountId);
     },
     updateNinja(accountId, fields) {
-      const allowed = ['belt', 'xp', 'coins', 'color', 'headband'];
+      const allowed = ['belt', 'xp', 'coins', 'color', 'headband', 'progress'];
       for (const k of Object.keys(fields)) {
         if (!allowed.includes(k)) continue;
         q(`UPDATE ninjas SET ${k} = ? WHERE account_id = ?`).run(fields[k], accountId);
