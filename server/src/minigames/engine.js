@@ -6,6 +6,7 @@ const P = require('../../../shared/protocol');
 
 const COUNTDOWN_MS = 3000;
 const RESULTS_MS = 8000;
+const ENDING_MS = 3500; // the round's last moments stay on screen this long, then fade to the results
 const REWARD_CAP = { coins: 500, xp: 250 }; // per match, after the admin multiplier
 
 function createEngine({ db, registry, sendTo, toRoom, onRewarded, log = () => {} }) {
@@ -163,12 +164,12 @@ function createEngine({ db, registry, sendTo, toRoom, onRewarded, log = () => {}
       cancel: (h) => { clearTimeout(h); clearInterval(h); l.timers.delete(h); },
       now: () => Date.now(),
       randomInt: (n) => Math.floor(Math.random() * n),
-      end: (results) => finish(l, results),
+      end: (results, opts) => finish(l, results, opts), // opts.endingMs: a shorter ending, for a game that already showed its own
       log: (...a) => log(`[minigame:${l.game.id}]`, ...a),
     };
   }
 
-  function finish(l, results) {
+  function finish(l, results, opts) {
     if (l.ended || l.phase !== 'playing') return;
     l.ended = true;
     clearTimers(l);
@@ -191,11 +192,12 @@ function createEngine({ db, registry, sendTo, toRoom, onRewarded, log = () => {}
       onRewarded(r.id, { game: l.game.id, place: r.place, score: r.score, players: rows.length });
     }
     log(`[minigame] ${l.game.id} at ${l.key} finished: ${rows.map((r) => `${r.name}=${r.score}`).join(', ')}`);
+    const endingMs = opts && Number.isFinite(opts.endingMs) ? Math.max(0, Math.min(ENDING_MS, opts.endingMs)) : ENDING_MS;
     l.phase = 'results';
-    l.endsAt = Date.now() + RESULTS_MS;
-    toLobby(l, { t: 'mg:results', key: l.key, game: l.game.id, results: rows });
+    l.endsAt = Date.now() + endingMs + RESULTS_MS;
+    toLobby(l, { t: 'mg:results', key: l.key, game: l.game.id, results: rows, endingMs });
     pushLobby(l);
-    after(l, RESULTS_MS, () => backToLobby(l));
+    after(l, endingMs + RESULTS_MS, () => backToLobby(l));
   }
 
   function backToLobby(l) {
@@ -267,4 +269,4 @@ function createEngine({ db, registry, sendTo, toRoom, onRewarded, log = () => {}
   };
 }
 
-module.exports = { createEngine, COUNTDOWN_MS, RESULTS_MS, REWARD_CAP };
+module.exports = { createEngine, COUNTDOWN_MS, RESULTS_MS, ENDING_MS, REWARD_CAP };

@@ -7,7 +7,7 @@
   const EMOTE_MS = 2500;
   const TITLE_MS = 2600; // room name card after walking through a door
 
-  const COVERING_PROPS = new Set(['forest', 'mountains', 'building', 'wall', 'counter', 'table', 'tree', 'dummy', 'npc']);
+  const COVERING_PROPS = new Set(['forest', 'mountains', 'building', 'cave', 'wall', 'counter', 'table', 'tree', 'dummy', 'npc']);
 
   function hash(x, y) {
     let h = (x * 374761393 + y * 668265263) | 0;
@@ -590,6 +590,66 @@
         ctx.textBaseline = 'middle';
         ctx.fillStyle = '#fff';
         ctx.fillText(p.label || '', x + w / 2, y + T * 1.5);
+      },
+      // A rocky hill with a dark opening at the bottom middle, where the portal is.
+      cave(ctx) {
+        const cx = x + w / 2, base = y + h, cols = p.w || 1;
+        ctx.fillStyle = 'rgba(0,0,0,.18)';
+        ctx.beginPath(); ctx.ellipse(cx, base, w * 0.56, T * 0.45, 0, 0, Math.PI * 2); ctx.fill();
+        // The hill: a lumpy outline, darker toward the ground
+        const left = x - T * 0.5, span = w + T;
+        const ridge = (i, n) => base - (h + T * 0.3) * Math.pow(Math.sin((Math.PI * i) / n), 0.55) - hash(i, 11) * T * 0.45;
+        const steps = cols * 2;
+        const rock = ctx.createLinearGradient(0, y, 0, base);
+        rock.addColorStop(0, '#8b8693'); rock.addColorStop(0.55, '#67626f'); rock.addColorStop(1, '#45414d');
+        ctx.fillStyle = rock;
+        ctx.beginPath(); ctx.moveTo(left, base);
+        for (let i = 0; i <= steps; i++) ctx.lineTo(left + (span * i) / steps, ridge(i, steps));
+        ctx.lineTo(left + span, base); ctx.closePath(); ctx.fill();
+        // Big boulders on the face of the hill
+        for (let i = 0; i < cols * 2; i++) {
+          const bx = x + hash(i, 21) * w, t = hash(i, 22);
+          const hillTop = base - (h * 0.92) * Math.pow(Math.sin(Math.PI * Math.min(0.97, Math.max(0.03, (bx - left) / span))), 0.55);
+          const by = hillTop + T * 0.8 + t * (base - hillTop - T * 1.2);
+          const r = T * (0.4 + hash(i, 23) * 0.55);
+          ctx.fillStyle = hash(i, 24) > 0.5 ? '#77727f' : '#59545f';
+          ctx.beginPath(); ctx.ellipse(bx, by, r * 1.25, r, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = 'rgba(255,255,255,.1)';
+          ctx.beginPath(); ctx.ellipse(bx - r * 0.3, by - r * 0.35, r * 0.55, r * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+        }
+        // Moss and grass on top
+        for (let i = 1; i < steps; i += 2) {
+          const mx = left + (span * i) / steps, my = ridge(i, steps) + T * 0.2;
+          ctx.fillStyle = hash(i, 31) > 0.5 ? '#4f9a54' : '#3f8a4a';
+          ctx.beginPath(); ctx.ellipse(mx, my, T * (0.5 + hash(i, 32) * 0.5), T * 0.24, 0, 0, Math.PI * 2); ctx.fill();
+        }
+        // Rocks framing the mouth
+        const mw = T * 3, mh = T * 3.5;
+        for (let i = 0; i <= 10; i++) {
+          const a = Math.PI + (Math.PI * i) / 10;
+          const rx = cx + Math.cos(a) * (mw / 2 + T * 0.22), ry = base - T * 0.1 + Math.sin(a) * (mh + T * 0.15);
+          ctx.fillStyle = i % 2 ? '#524d59' : '#3e3a45';
+          ctx.beginPath(); ctx.ellipse(rx, ry, T * 0.52, T * 0.4, a, 0, Math.PI * 2); ctx.fill();
+        }
+        // The dark opening, deepest in the middle
+        const dark = ctx.createRadialGradient(cx, base - mh * 0.45, T * 0.2, cx, base - mh * 0.45, mh);
+        dark.addColorStop(0, '#000000'); dark.addColorStop(0.7, '#0c0a10'); dark.addColorStop(1, '#221e29');
+        ctx.fillStyle = dark;
+        ctx.beginPath(); ctx.moveTo(cx - mw / 2, base);
+        ctx.quadraticCurveTo(cx - mw / 2, base - mh * 1.28, cx, base - mh);
+        ctx.quadraticCurveTo(cx + mw / 2, base - mh * 1.28, cx + mw / 2, base);
+        ctx.closePath(); ctx.fill();
+        // Stalactites hanging in the opening
+        ctx.fillStyle = '#4d4854';
+        for (let i = 0; i < 6; i++) {
+          const sx = cx - mw * 0.36 + (mw * 0.72 * i) / 5;
+          const top = base - mh * (1.0 - Math.abs(i - 2.5) * 0.09);
+          const len = T * (0.45 + hash(i, 41) * 0.55);
+          ctx.beginPath(); ctx.moveTo(sx - T * 0.17, top - T * 0.1); ctx.lineTo(sx + T * 0.17, top - T * 0.1); ctx.lineTo(sx, top + len); ctx.closePath(); ctx.fill();
+        }
+        // Mine rails running out of the dark
+        ctx.strokeStyle = 'rgba(180,180,190,.55)'; ctx.lineWidth = Math.max(1, T * 0.07);
+        for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(cx + s * T * 0.2, base - T * 1.2); ctx.lineTo(cx + s * T * 0.58, base); ctx.stroke(); }
       },
       forest(ctx) {
         ctx.fillStyle = '#2f6d4f';

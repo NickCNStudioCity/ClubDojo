@@ -5,15 +5,126 @@
 // trick in the air after a ramp (hold a direction to flip instead of spin; two tricks per jump
 // is a double). On a touch screen, use the buttons at the bottom.
 //
-// Kept on this computer (cosmetic, never sent to the server): your best time and a ghost for each
-// of today's courses, three daily challenges, lifetime stats, and the sled styles they unlock.
-// Sled styles show on your own screen; other riders see the classic sled.
+// Kept on this computer (cosmetic, never sent to the server): three daily challenges, lifetime
+// stats, and the sled styles they unlock (picked on the waiting screen). Sled styles show on your
+// own screen; other riders see the classic sled. Daily-mode courses also keep a best time and ghost.
 // Server rules: server/src/minigames/games/sled-race.js
+(function () {
+  const SKINS = [
+    { id: 'classic', name: 'Classic', wood: '#b9773f', lip: '#8a5a32' },
+    { id: 'cherry', name: 'Cherry Racer', wood: '#c8322f', lip: '#8e1f1d', trim: '#ffffff', need: 'Finish 3 races', test: (s) => s.finishes >= 3, prog: (s) => [s.finishes, 3] },
+    { id: 'bamboo', name: 'Bamboo', wood: '#a3c450', lip: '#5f7d22', bands: '#6f8f2a', need: 'Collect 150 coins', test: (s) => s.coins >= 150, prog: (s) => [s.coins, 150] },
+    { id: 'glacier', name: 'Glacier', wood: '#9bd8ff', lip: '#4aa3d8', shine: true, need: 'Earn a silver medal', test: (s) => s.medal >= 2 },
+    { id: 'dragon', name: 'Dragon', wood: '#2c8f5a', lip: '#e8453c', scales: '#1f6b43', need: 'Land 25 tricks', test: (s) => s.tricks >= 25, prog: (s) => [s.tricks, 25] },
+    { id: 'shadow', name: 'Shadow', wood: '#2a2f3a', lip: '#14161b', trim: '#8a5cff', need: 'Finish 5 daily challenges', test: (s) => s.challenges >= 5, prog: (s) => [s.challenges, 5] },
+    { id: 'golden', name: 'Golden', wood: '#f5c542', lip: '#b8860b', shine: true, need: 'Earn a gold medal', test: (s) => s.medal >= 3 },
+  ];
+
+  // ---- Saved progress (shared by the lobby's sled picker and the race) ----
+  const STORE = 'clubdojo.sledRace.v3';
+  const todayKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  function loadStore() {
+    const today = todayKey();
+    let v = null;
+    try { v = JSON.parse(localStorage.getItem(STORE)); } catch { /* blocked or corrupt */ }
+    if (!v || typeof v !== 'object') {
+      v = {};
+      try { // carry over lifetime numbers from the first version
+        const old = JSON.parse(localStorage.getItem('clubdojo.sledRace.v2')) || {};
+        v.stats = { races: old.races || 0, finishes: old.finishes || 0, wins: old.wins || 0, medal: old.medal || 0 };
+      } catch { /* nothing to carry over */ }
+    }
+    v.stats = { races: 0, finishes: 0, wins: 0, coins: 0, tricks: 0, closeCalls: 0, challenges: 0, medal: 0, ...(v.stats || {}) };
+    v.courses = v.courses && typeof v.courses === 'object' ? v.courses : {};
+    for (const k of Object.keys(v.courses)) if (!k.startsWith(today)) delete v.courses[k]; // yesterday's courses are gone
+    if (!v.daily || v.daily.day !== today) v.daily = { day: today, done: [] };
+    if (!SKINS.some((sk) => sk.id === v.skin)) v.skin = 'classic';
+    v.muted = !!v.muted;
+    return v;
+  }
+  let store = null;
+  const getStore = () => { if (!store || store.daily.day !== todayKey()) store = loadStore(); return store; };
+  const saveStore = () => { try { localStorage.setItem(STORE, JSON.stringify(getStore())); } catch { /* storage blocked: progress just isn't kept */ } };
+  const unlocked = (sk) => !sk.test || sk.test(getStore().stats);
+  const mySkin = () => SKINS.find((sk) => sk.id === getStore().skin && unlocked(sk)) || SKINS[0];
+
+  // A toboggan pointing down the run, with a curled front and a stripe in the rider's colour
+  function drawToboggan(g, p, s, angle, yaw, stripe, skin) {
+    g.save();
+    g.translate(p.sx, p.sy);
+    g.rotate(angle + yaw);
+    g.scale(1, 0.55); // seen at an angle from above, the deck looks narrower across than along
+    const L = s * 2.2, Wd = s * 0.95;
+    g.fillStyle = 'rgba(30,30,30,.35)'; // runners peeking out underneath
+    g.fillRect(-L * 0.46, -Wd * 0.58, L * 0.9, Wd * 0.12); g.fillRect(-L * 0.46, Wd * 0.46, L * 0.9, Wd * 0.12);
+    g.beginPath();
+    g.moveTo(-L * 0.5, -Wd * 0.5); g.lineTo(L * 0.32, -Wd * 0.5);
+    g.quadraticCurveTo(L * 0.62, -Wd * 0.5, L * 0.6, 0); g.quadraticCurveTo(L * 0.62, Wd * 0.5, L * 0.32, Wd * 0.5);
+    g.lineTo(-L * 0.5, Wd * 0.5); g.closePath();
+    g.fillStyle = skin.wood; g.fill();
+    g.save(); g.clip();
+    if (skin.bands) { g.fillStyle = skin.bands; for (const t of [-0.35, 0.05, 0.4]) g.fillRect(L * t, -Wd, L * 0.04, Wd * 2); }
+    if (skin.scales) {
+      g.fillStyle = skin.scales;
+      for (let i = 0; i < 6; i++) for (let j = 0; j < 3; j++) { g.beginPath(); g.arc(-L * 0.42 + i * L * 0.15, -Wd * 0.33 + j * Wd * 0.33, Wd * 0.12, 0, Math.PI); g.fill(); }
+    }
+    if (skin.shine) {
+      const sh = g.createLinearGradient(-L * 0.5, -Wd * 0.5, L * 0.5, Wd * 0.5);
+      sh.addColorStop(0, 'rgba(255,255,255,0)'); sh.addColorStop(0.45, 'rgba(255,255,255,.55)'); sh.addColorStop(0.55, 'rgba(255,255,255,0)');
+      g.fillStyle = sh; g.fillRect(-L * 0.5, -Wd, L * 1.2, Wd * 2);
+    }
+    g.restore();
+    g.strokeStyle = skin.trim || 'rgba(80,45,20,.45)'; g.lineWidth = Math.max(1, s * (skin.trim ? 0.08 : 0.05));
+    for (const t of [-0.17, 0.17]) { g.beginPath(); g.moveTo(-L * 0.48, Wd * t); g.lineTo(L * 0.45, Wd * t); g.stroke(); }
+    g.fillStyle = stripe;
+    g.fillRect(-L * 0.12, -Wd * 0.5, L * 0.14, Wd);
+    g.fillStyle = skin.lip; // curled front
+    g.beginPath(); g.ellipse(L * 0.52, 0, L * 0.09, Wd * 0.5, 0, 0, Math.PI * 2); g.fill();
+    g.restore();
+  }
+
+
+  // The sled picker on the waiting screen.
+  function sledPicker({ h }) {
+    const style = h('style', {}, `
+      .sr-skins { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+      .sr-skin { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px; border-radius: 12px; border: 2px solid transparent; background: rgba(0,0,0,.25); color: inherit; font: 700 12px var(--body); cursor: pointer; }
+      .sr-skin.on { border-color: var(--gold, #f5c542); background: rgba(245,197,66,.16); }
+      .sr-skin:disabled { opacity: .5; cursor: default; }
+      .sr-skin canvas { width: 84px; height: 46px; }
+      .sr-skin small { font-weight: 600; opacity: .8; font-size: 10px; line-height: 1.15; text-align: center; }
+    `);
+    const wrap = h('div', { class: 'sr-skins' });
+    const draw = () => wrap.replaceChildren(...SKINS.map((sk) => {
+      const ok = unlocked(sk);
+      const stats = getStore().stats;
+      const prog = !ok && sk.prog ? ` (${Math.min(...sk.prog(stats))}/${sk.prog(stats)[1]})` : '';
+      const cv = h('canvas', { width: 168, height: 92 });
+      const c = cv.getContext('2d');
+      if (!ok) c.globalAlpha = 0.55;
+      drawToboggan(c, { sx: 74, sy: 46 }, 54, 0, 0, '#e8453c', sk);
+      const b = h('button', { class: `sr-skin${mySkin().id === sk.id ? ' on' : ''}`, disabled: !ok }, cv, h('span', {}, ok ? sk.name : `🔒 ${sk.name}`), ok ? null : h('small', {}, `${sk.need}${prog}`));
+      if (ok) b.addEventListener('click', () => { getStore().skin = sk.id; saveStore(); draw(); });
+      return b;
+    }));
+    draw();
+    return h('section', { class: 'mg-guide' }, style, h('h3', {}, 'Choose your sled'), wrap);
+  }
+
 ClubDojoMinigames.register({
   id: 'sled-race',
+  ownEnding: true,
+  lobbyPanel: sledPicker,
+  guide: {
+    summary: 'Race down a brand new mountain run every time. After the finish you can sit at the bottom as long as you like, up to a minute, then press Continue.',
+    controls: [['← → or A / D', 'Steer'], ['Hold ↓ or S', 'Tuck: faster, but you steer slower'], ['Space, ↑ or W', 'Trick while in the air after a ramp'], ['← → + Space', 'Hold a direction to flip instead of spin']],
+    tips: ['Rocks and rolling snowballs stop you dead. Skim past them for a close-call bonus.', 'Two tricks in one jump is a double, and landing gives you a boost.', 'Ride close behind a rival to draft them. Ice is fast, but your steering slides.'],
+  },
 
   mount(ctx) {
     const { h, el, avatar } = ctx;
+    const today = todayKey();
+    const store = getStore();
 
     // ---- Cosmetic data ----
     const THEMES = {
@@ -24,15 +135,6 @@ ClubDojoMinigames.register({
       night: { deep: ['#22324f', '#30476b', '#22324f'], band: ['#cbd8ec', '#bfcde4'], bank: '#7d92b6', lip: '#dfe8f7',
         tree: ['#12312b', '#1b463a'], drift: 'rgba(200,215,240,.25)', shadow: 'rgba(5,10,30,.3)', tint: 'rgba(8,16,48,.3)', night: true, label: 'Night' },
     };
-    const SKINS = [
-      { id: 'classic', name: 'Classic', wood: '#b9773f', lip: '#8a5a32' },
-      { id: 'cherry', name: 'Cherry Racer', wood: '#c8322f', lip: '#8e1f1d', trim: '#ffffff', need: 'Finish 3 races', test: (s) => s.finishes >= 3, prog: (s) => [s.finishes, 3] },
-      { id: 'bamboo', name: 'Bamboo', wood: '#a3c450', lip: '#5f7d22', bands: '#6f8f2a', need: 'Collect 150 coins', test: (s) => s.coins >= 150, prog: (s) => [s.coins, 150] },
-      { id: 'glacier', name: 'Glacier', wood: '#9bd8ff', lip: '#4aa3d8', shine: true, need: 'Earn a silver medal', test: (s) => s.medal >= 2 },
-      { id: 'dragon', name: 'Dragon', wood: '#2c8f5a', lip: '#e8453c', scales: '#1f6b43', need: 'Land 25 tricks', test: (s) => s.tricks >= 25, prog: (s) => [s.tricks, 25] },
-      { id: 'shadow', name: 'Shadow', wood: '#2a2f3a', lip: '#14161b', trim: '#8a5cff', need: 'Finish 5 daily challenges', test: (s) => s.challenges >= 5, prog: (s) => [s.challenges, 5] },
-      { id: 'golden', name: 'Golden', wood: '#f5c542', lip: '#b8860b', shine: true, need: 'Earn a gold medal', test: (s) => s.medal >= 3 },
-    ];
     const CHALLENGES = [
       { id: 'tricks3', label: 'Land 3 tricks in one race', n: 3, val: (r) => r.tricks },
       { id: 'coins20', label: 'Collect 20 coins in one race', n: 20, val: (r) => r.coins },
@@ -46,30 +148,6 @@ ClubDojoMinigames.register({
     ];
 
     // ---- Saved progress ----
-    const STORE = 'clubdojo.sledRace.v3';
-    const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
-    const loadStore = () => {
-      let v = null;
-      try { v = JSON.parse(localStorage.getItem(STORE)); } catch { /* blocked or corrupt */ }
-      if (!v || typeof v !== 'object') {
-        v = {};
-        try { // carry over lifetime numbers from the first version
-          const old = JSON.parse(localStorage.getItem('clubdojo.sledRace.v2')) || {};
-          v.stats = { races: old.races || 0, finishes: old.finishes || 0, wins: old.wins || 0, medal: old.medal || 0 };
-        } catch { /* nothing to carry over */ }
-      }
-      v.stats = { races: 0, finishes: 0, wins: 0, coins: 0, tricks: 0, closeCalls: 0, challenges: 0, medal: 0, ...(v.stats || {}) };
-      v.courses = v.courses && typeof v.courses === 'object' ? v.courses : {};
-      for (const k of Object.keys(v.courses)) if (!k.startsWith(today)) delete v.courses[k]; // yesterday's courses are gone
-      if (!v.daily || v.daily.day !== today) v.daily = { day: today, done: [] };
-      if (!SKINS.some((sk) => sk.id === v.skin)) v.skin = 'classic';
-      v.muted = !!v.muted;
-      return v;
-    };
-    const store = loadStore();
-    const saveStore = () => { try { localStorage.setItem(STORE, JSON.stringify(store)); } catch { /* storage blocked: progress just isn't kept */ } };
-    const unlocked = (sk) => !sk.test || sk.test(store.stats);
-    const mySkin = () => SKINS.find((sk) => sk.id === store.skin && unlocked(sk)) || SKINS[0];
     const dayHash = [...today].reduce((a, c) => (Math.imul(a ^ c.charCodeAt(0), 16777619) >>> 0), 2166136261);
     const todays = (() => { // three challenges for today, the same all day
       const pool = CHALLENGES.slice(), out = [];
@@ -96,6 +174,11 @@ ClubDojoMinigames.register({
     const btnTuck = btn('tuck', 'Tuck', 'Tuck');
     const btnTrick = btn('trick', 'Trick', 'Trick');
     const btnMute = h('button', { class: 'sr-mute', 'aria-label': 'Sound on or off' });
+    const btnGo = h('button', { class: 'sr-go', onclick: () => continueOn() }, 'Continue');
+    const sitNote = h('div', { class: 'sub' });
+    let pressedGo = false;
+    let sitEnd = 0; // performance time the results come up on their own, once the race is over
+    let sitText = '';
     const style = h('style', {}, `
       .sr { position: absolute; inset: 0; overflow: hidden; background: #dfeaf3; user-select: none; }
       .sr-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
@@ -140,10 +223,10 @@ ClubDojoMinigames.register({
       .sr-hint { position: absolute; bottom: 92px; left: 56px; right: 56px; text-align: center; color: #10243a; font: 600 14px system-ui, sans-serif;
         opacity: .85; pointer-events: none; transition: opacity .8s; text-shadow: 0 1px 0 rgba(255,255,255,.7); }
       .sr-hint.gone { opacity: 0; }
-      .sr-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 340px; max-width: calc(100% - 32px);
+      .sr-card { position: absolute; top: 50%; right: 52px; transform: translateY(-50%); width: 340px; max-width: calc(100% - 32px);
         max-height: calc(100% - 32px); overflow: auto; box-sizing: border-box;
         background: rgba(255,255,255,.96); color: #10243a; border-radius: 18px; padding: 14px 18px; text-align: center;
-        box-shadow: 0 10px 30px rgba(0,0,0,.35); font-family: system-ui, sans-serif; animation: sr-card-pop .35s ease-out; }
+        box-shadow: 0 10px 30px rgba(0,0,0,.35); font-family: system-ui, sans-serif; animation: sr-card-in .35s ease-out; }
       .sr-card h3 { margin: 0 0 2px; font-family: var(--display); font-size: 28px; }
       .sr-card .medal { font-size: 40px; line-height: 1; }
       .sr-card .row { display: flex; justify-content: center; gap: 14px; margin-top: 6px; font-size: 12px; }
@@ -161,6 +244,8 @@ ClubDojoMinigames.register({
       .sr-card .skin.on { border-color: #2f6fd1; background: #e4efff; }
       .sr-card .skin:disabled { opacity: .45; cursor: default; }
       .sr-card .new { margin-top: 8px; font-weight: 700; color: #8a5cff; }
+      .sr-go { margin-top: 12px; width: 100%; padding: 10px; border: 0; border-radius: 12px; background: #2f6fd1; color: #fff; font-family: var(--display); font-size: 20px; letter-spacing: .03em; cursor: pointer; }
+      .sr-go:disabled { background: #8ea3b8; cursor: default; }
       .sr-btn { position: absolute; bottom: 14px; height: 64px; border-radius: 18px; border: 0; color: #fff; font: 700 18px system-ui, sans-serif;
         background: rgba(16,36,58,.38); touch-action: none; user-select: none; -webkit-user-select: none; }
       .sr-btn.left, .sr-btn.right { width: 78px; font-size: 26px; }
@@ -177,8 +262,9 @@ ClubDojoMinigames.register({
       .sr.narrow .sr-chall { top: 52px; }
       .sr.narrow .sr-combo { top: 56px; font-size: 14px; }
       .sr.narrow .sr-banner { font-size: 34px; }
+      .sr.narrow .sr-card { left: 50%; right: auto; transform: translate(-50%, -50%); }
       @keyframes sr-pop { from { transform: scale(.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-      @keyframes sr-card-pop { from { transform: translate(-50%, -50%) scale(.7); opacity: 0; } to { transform: translate(-50%, -50%) scale(1); opacity: 1; } }
+      @keyframes sr-card-in { from { opacity: 0; } to { opacity: 1; } }
       @keyframes sr-fade { 0% { opacity: 0; } 10% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
     `);
     const root = h('div', { class: 'sr' }, canvas, rail, hudPlace, hudClock, hudStyle, hudChall, combo, courseTag, banner, hint, card,
@@ -221,7 +307,7 @@ ClubDojoMinigames.register({
     const later = (ms, fn) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); return t; };
     let bannerTimer = null;
     const notice = (text, ms = 1400, sub = null) => {
-      banner.replaceChildren(text, sub ? h('small', {}, sub) : null); banner.hidden = false;
+      banner.replaceChildren(...[text, sub ? h('small', {}, sub) : null].filter(Boolean)); banner.hidden = false;
       banner.style.animation = 'none'; void banner.offsetWidth; banner.style.animation = '';
       if (bannerTimer) { clearTimeout(bannerTimer); timers.delete(bannerTimer); }
       bannerTimer = later(ms, () => { banner.hidden = true; });
@@ -296,9 +382,17 @@ ClubDojoMinigames.register({
       ctx.send({ type: 'tuck', on });
     }
     function trick() { if (!over) ctx.send({ type: 'trick' }); }
+    function continueOn() {
+      if (pressedGo) return;
+      pressedGo = true;
+      btnGo.disabled = true;
+      btnGo.textContent = 'Waiting for the others...';
+      ctx.send({ type: 'done' });
+    }
     const KEY = { ArrowLeft: 'left', a: 'left', A: 'left', ArrowRight: 'right', d: 'right', D: 'right',
       ArrowDown: 'tuck', s: 'tuck', S: 'tuck', ' ': 'trick', ArrowUp: 'trick', w: 'trick', W: 'trick' };
     function onKey(e, down) {
+      if (e.key === 'Enter' && down && !card.hidden) { e.preventDefault(); continueOn(); return; }
       const k = KEY[e.key];
       if (!k) return;
       e.preventDefault();
@@ -357,7 +451,8 @@ ClubDojoMinigames.register({
       }
       return { y0: cam + d0 - 40, y1: cam + d1 + 60, x0: camX + x0 - 0.3, x1: camX + x1 + 0.3 };
     }
-    const hash = (n) => { const s = Math.sin(n * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); };
+    let sceneSeed = 0; // from the server: scatters the scenery differently each round
+    const hash = (n) => { const s = Math.sin((n + sceneSeed) * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); };
     const ballX = (ob, t) => ob.x + ob.amp * Math.sin((2 * Math.PI * t) / ob.period + ob.phase); // same as the server
 
     function path(pts) { g.beginPath(); g.moveTo(pts[0].sx, pts[0].sy); for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].sx, pts[i].sy); g.closePath(); }
@@ -679,45 +774,10 @@ ClubDojoMinigames.register({
       const s = 0.05 * U;
       g.save();
       g.globalAlpha = 0.35;
-      drawToboggan(p, s, 0, '#ffffff', { wood: '#cfe3f5', lip: '#a9c8e6' });
+      drawToboggan(g, p, s, FWD_ANGLE, 0, '#ffffff', { wood: '#cfe3f5', lip: '#a9c8e6' });
       if (me) avatar.draw(g, { ...me.loadout, color: '#cfe3f5', headband: '#ffffff', accessories: {} }, { x: p.sx - FWD.x * s * 0.35, y: p.sy - FWD.y * s * 0.35, size: s * 1.25, facing: 1, time: now, shadow: false });
       g.restore();
       label(p.sx, p.sy - s * 2.4, 'Your best', 'rgba(255,255,255,.9)', 11);
-    }
-
-    // A toboggan pointing down the run, with a curled front and a stripe in the rider's colour
-    function drawToboggan(p, s, yaw, stripe, skin) {
-      g.save();
-      g.translate(p.sx, p.sy);
-      g.rotate(FWD_ANGLE + yaw);
-      g.scale(1, 0.55); // seen at an angle from above, the deck looks narrower across than along
-      const L = s * 2.2, Wd = s * 0.95;
-      g.fillStyle = 'rgba(30,30,30,.35)'; // runners peeking out underneath
-      g.fillRect(-L * 0.46, -Wd * 0.58, L * 0.9, Wd * 0.12); g.fillRect(-L * 0.46, Wd * 0.46, L * 0.9, Wd * 0.12);
-      g.beginPath();
-      g.moveTo(-L * 0.5, -Wd * 0.5); g.lineTo(L * 0.32, -Wd * 0.5);
-      g.quadraticCurveTo(L * 0.62, -Wd * 0.5, L * 0.6, 0); g.quadraticCurveTo(L * 0.62, Wd * 0.5, L * 0.32, Wd * 0.5);
-      g.lineTo(-L * 0.5, Wd * 0.5); g.closePath();
-      g.fillStyle = skin.wood; g.fill();
-      g.save(); g.clip();
-      if (skin.bands) { g.fillStyle = skin.bands; for (const t of [-0.35, 0.05, 0.4]) g.fillRect(L * t, -Wd, L * 0.04, Wd * 2); }
-      if (skin.scales) {
-        g.fillStyle = skin.scales;
-        for (let i = 0; i < 6; i++) for (let j = 0; j < 3; j++) { g.beginPath(); g.arc(-L * 0.42 + i * L * 0.15, -Wd * 0.33 + j * Wd * 0.33, Wd * 0.12, 0, Math.PI); g.fill(); }
-      }
-      if (skin.shine) {
-        const sh = g.createLinearGradient(-L * 0.5, -Wd * 0.5, L * 0.5, Wd * 0.5);
-        sh.addColorStop(0, 'rgba(255,255,255,0)'); sh.addColorStop(0.45, 'rgba(255,255,255,.55)'); sh.addColorStop(0.55, 'rgba(255,255,255,0)');
-        g.fillStyle = sh; g.fillRect(-L * 0.5, -Wd, L * 1.2, Wd * 2);
-      }
-      g.restore();
-      g.strokeStyle = skin.trim || 'rgba(80,45,20,.45)'; g.lineWidth = Math.max(1, s * (skin.trim ? 0.08 : 0.05));
-      for (const t of [-0.17, 0.17]) { g.beginPath(); g.moveTo(-L * 0.48, Wd * t); g.lineTo(L * 0.45, Wd * t); g.stroke(); }
-      g.fillStyle = stripe;
-      g.fillRect(-L * 0.12, -Wd * 0.5, L * 0.14, Wd);
-      g.fillStyle = skin.lip; // curled front
-      g.beginPath(); g.ellipse(L * 0.52, 0, L * 0.09, Wd * 0.5, 0, 0, Math.PI * 2); g.fill();
-      g.restore();
     }
 
     function drawSled(id, sl, pl, now) {
@@ -755,7 +815,7 @@ ClubDojoMinigames.register({
         gl.addColorStop(0, 'rgba(90,200,255,.55)'); gl.addColorStop(1, 'rgba(90,200,255,0)');
         g.fillStyle = gl; g.beginPath(); g.ellipse(p.sx, p.sy, s * 2.2, s * 1.1, 0, 0, Math.PI * 2); g.fill();
       }
-      drawToboggan(p, s, lean * 0.3 + wobble, look.headband || '#e8453c', skin);
+      drawToboggan(g, p, s, FWD_ANGLE, lean * 0.3 + wobble, look.headband || '#e8453c', skin);
 
       // The rider sits toward the back of the sled and leans into turns; tucking crouches low.
       // The avatar renderer draws their own gi, headband, belt and accessories.
@@ -782,14 +842,6 @@ ClubDojoMinigames.register({
       g.restore();
       // Scarf knot at the neck
       g.fillStyle = scarf; g.beginPath(); g.ellipse(neck.sx, neck.sy, size * 0.3, size * 0.1, 0, 0, Math.PI * 2); g.fill();
-      // Legs stretched forward along the deck, in front of the body
-      const legEnd = { sx: seat.sx + FWD.x * s * 0.95, sy: seat.sy + FWD.y * s * 0.95 - s * 0.05 };
-      g.strokeStyle = shade(look.color || '#20262e', -0.15); g.lineCap = 'round'; g.lineWidth = s * 0.34;
-      for (const off of [-0.22, 0.22]) {
-        const ox = ACROSS.x * s * off, oy = ACROSS.y * s * off * 0.55;
-        g.beginPath(); g.moveTo(seat.sx + ox, seat.sy - s * 0.1 + oy); g.lineTo(legEnd.sx + ox, legEnd.sy + oy); g.stroke();
-        g.fillStyle = '#1b1b1b'; g.beginPath(); g.ellipse(legEnd.sx + ox, legEnd.sy + oy, s * 0.2, s * 0.15, 0, 0, Math.PI * 2); g.fill();
-      }
       // Hands: on the steering rope while racing, thrown up in the air after the finish
       const rope = { sx: p.sx + FWD.x * s * 1.05, sy: p.sy + FWD.y * s * 1.05 * 0.55 };
       for (const off of [-1, 1]) {
@@ -996,8 +1048,9 @@ ClubDojoMinigames.register({
         hudKey = key;
         hudPlace.replaceChildren(pos ? ordinal(pos) : '-', h('small', {}, ` / ${order.length}`));
         const narrow = root.classList.contains('narrow');
-        const bestTxt = bestMs ? `${narrow ? 'Best' : "Today's best"} ${fmt(bestMs)}` : narrow ? 'No best yet' : 'No time on this course yet';
-        hudClock.replaceChildren(clock, h('small', {}, `${bestTxt} · ${Math.ceil(left / 1000)}s left`));
+        const daily = !!(track.course && track.course.key);
+        const bestTxt = !daily ? '' : bestMs ? `${narrow ? 'Best' : "Today's best"} ${fmt(bestMs)} · ` : narrow ? 'No best yet · ' : 'No time on this course yet · ';
+        hudClock.replaceChildren(clock, h('small', {}, `${bestTxt}${Math.ceil(left / 1000)}s left`));
         hudStyle.replaceChildren(h('span', {}, h('i', { class: 'sr-coin' }), ' ', h('b', {}, String(me ? me.coins : 0))), h('br'), h('span', {}, `Style ${me ? me.style : 0}`));
       }
       if (me && me.combo >= 3) {
@@ -1006,6 +1059,8 @@ ClubDojoMinigames.register({
         if (combo.textContent !== txt || combo.hidden) { combo.textContent = txt; combo.hidden = false; }
       } else if (!combo.hidden) combo.hidden = true;
       btnTrick.classList.toggle('ready', !!(me && me.airMs && now - me.airT0 < me.airMs - 200 && me.jumpTricks < 2));
+      const note = pressedGo ? '' : sitEnd ? `Results in ${Math.max(0, Math.ceil((sitEnd - now) / 1000))}s, or press Continue when you're ready.` : 'Stay as long as you like. Press Continue when you\'re ready.';
+      if (note !== sitText) { sitText = note; sitNote.textContent = note; }
       const want = new Set();
       const place = (k, frac, color, cls) => {
         want.add(k);
@@ -1040,23 +1095,6 @@ ClubDojoMinigames.register({
       return SKINS.filter((sk) => unlocked(sk) && !before.includes(sk.id));
     }
 
-    function skinPicker() {
-      const wrap = h('div', { class: 'skins' });
-      const draw = () => wrap.replaceChildren(...SKINS.map((sk) => {
-        const ok = unlocked(sk);
-        const prog = !ok && sk.prog ? ` (${Math.min(...sk.prog(store.stats))}/${sk.prog(store.stats)[1]})` : '';
-        const b = h('button', { class: `skin${mySkin().id === sk.id ? ' on' : ''}`, title: ok ? sk.name : `${sk.need}${prog}`, disabled: !ok },
-          h('span', { class: 'sw', style: `background:${sk.wood};border-right:5px solid ${sk.lip}` }), ok ? sk.name : `🔒 ${sk.name}`);
-        if (ok) b.addEventListener('click', () => { store.skin = sk.id; saveStore(); draw(); });
-        return b;
-      }));
-      draw();
-      const next = SKINS.find((sk) => !unlocked(sk));
-      return h('div', { class: 'sect' }, h('b', {}, 'Your sled'), wrap,
-        h('div', { class: 'sub' }, next ? `Next: ${next.name}, ${next.need.toLowerCase()}${next.prog ? ` (${Math.min(...next.prog(store.stats))}/${next.prog(store.stats)[1]})` : ''}` : 'Every sled unlocked!'),
-        h('div', { class: 'sub' }, 'Sled styles show on your screen.'));
-    }
-
     // Save everything the moment you finish (the host can unmount the race soon after), then show the card
     function finishRace(m) {
       const medals = track.medals || {};
@@ -1064,7 +1102,7 @@ ClubDojoMinigames.register({
       run.medal = medal ? medal[2] : 0;
       const key = track.course && track.course.key;
       const prev = courseRec && courseRec.ms;
-      const pb = !prev || m.ms < prev;
+      const pb = !!key && (!prev || m.ms < prev);
       if (key && pb) { courseRec = { ms: m.ms, ghost: myRun.slice(), medal: run.medal }; store.courses[key] = courseRec; }
       const fresh = recordRace(m);
       later(500, () => showFinishCard(m, { medals, medal, prev, pb, fresh }));
@@ -1073,7 +1111,7 @@ ClubDojoMinigames.register({
     function showFinishCard(m, { medals, medal, prev, pb, fresh }) {
       const goal = !medal ? `bronze at ${fmt(medals.bronze)}` : medal[1] === 'bronze' ? `silver at ${fmt(medals.silver)}`
         : medal[1] === 'silver' ? `gold at ${fmt(medals.gold)}` : null;
-      card.replaceChildren(
+      card.replaceChildren(...[
         medal ? h('div', { class: 'medal' }, medal[0]) : null,
         h('h3', {}, m.place === 1 ? (byId.size > 1 ? 'You win!' : 'Finished!') : `${ordinal(m.place)} place`),
         h('div', { class: 'row' },
@@ -1084,12 +1122,12 @@ ClubDojoMinigames.register({
           h('span', {}, h('b', {}, String(m.style || 0)), 'style')),
         pb ? h('div', { class: 'pb' }, prev ? `New best on ${track.course ? track.course.name : 'this course'}! ${((prev - m.ms) / 1000).toFixed(1)}s faster`
           : 'First time down this course today. Your ghost will race you next time.')
-          : h('div', { class: 'sub' }, `Today's best here: ${fmt(prev)}`),
+          : prev ? h('div', { class: 'sub' }, `Today's best here: ${fmt(prev)}`) : null,
         h('div', { class: 'sub' }, goal ? `Next goal: ${goal}` : 'Gold! Now beat your own ghost.'),
         ...fresh.map((sk) => h('div', { class: 'new' }, `New sled unlocked: ${sk.name}!`)),
         h('div', { class: 'sect' }, h('b', {}, `Daily challenges ${todays.filter((c) => store.daily.done.includes(c.id)).length}/3`),
           ...todays.map((c) => { const done = store.daily.done.includes(c.id); return h('div', { class: `ch${done ? ' done' : ''}` }, done ? '✔' : '○', c.label, done ? null : h('i', {}, `${Math.min(c.n, c.val(run))}/${c.n}`)); })),
-        skinPicker());
+        btnGo, sitNote].filter(Boolean)); // replaceChildren would print an empty entry as the word null
       card.hidden = false;
       if (fresh.length) later(600, () => sfx.challenge());
     }
@@ -1149,6 +1187,7 @@ ClubDojoMinigames.register({
         const you = data.id === ctx.youId;
         if (data.type === 'track') {
           track = { length: data.length, roundMs: data.roundMs, obstacles: data.obstacles || [], medals: data.medals || null, course: data.course || null };
+          sceneSeed = (data.seed || 0) % 997;
           theme = THEMES[data.course && data.course.theme] || THEMES.morning;
           const key = track.course && track.course.key;
           courseRec = key ? store.courses[key] || null : null;
@@ -1156,7 +1195,7 @@ ClubDojoMinigames.register({
           startAt = now;
           raceMs = 0;
           if (track.course) {
-            courseTag.replaceChildren(track.course.name, h('small', {}, `${key ? "Today's course" : 'Random course'} · ${theme.label}${courseRec ? ` · best ${fmt(courseRec.ms)}` : ''}`));
+            courseTag.replaceChildren(track.course.name, h('small', {}, `${key ? "Today's course" : 'Brand new run'} · ${theme.label}${courseRec ? ` · best ${fmt(courseRec.ms)}` : ''}`));
             courseTag.hidden = false;
             later(3300, () => { courseTag.hidden = true; });
           }
@@ -1257,7 +1296,17 @@ ClubDojoMinigames.register({
             if (sl) { sl.x = v[0]; sl.y = v[1]; sl.vy = 0; }
           }
           const me = sleds.get(ctx.youId);
-          if (me && !me.finished) { notice("Time's up!", 1600); recordRace(null); }
+          sitEnd = now + (data.sitMs || 60000);
+          if (me && !me.finished) {
+            notice("Time's up!", 1600);
+            recordRace(null);
+            later(400, () => {
+              card.replaceChildren(h('h3', {}, "Time's up!"),
+                h('div', { class: 'row' }, h('span', {}, h('b', {}, `${Math.round((me.y / track.length) * 100)}%`), 'of the run'), h('span', {}, h('b', {}, String(run.coins)), 'coins'), h('span', {}, h('b', {}, String(run.tricks)), 'tricks')),
+                btnGo, sitNote);
+              card.hidden = false;
+            });
+          }
         }
       },
       unmount() {
@@ -1271,3 +1320,4 @@ ClubDojoMinigames.register({
     };
   },
 });
+})();

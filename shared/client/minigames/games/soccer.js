@@ -4,11 +4,19 @@
 // net ripples, power-up glows. Server rules: server/src/minigames/games/soccer.js
 ClubDojoMinigames.register({
   id: 'soccer',
+  ownEnding: true,
+  guide: {
+    summary: '2v2 on a stadium pitch, with bots on any open spots. Score more than the other team before full time. Level at full time means Golden Goal: the next goal wins.',
+    controls: [['WASD or arrows', 'Run'], ['Space', 'Shoot the way you are running'], ['Shift', 'Dash and shove (short cooldown)']],
+    tips: ['Blue attacks the right goal and red attacks the left. Every ninja has a team-colored outline.', 'Grab Speed Boots and Fire Shots when they appear in midfield.', 'Your ring under your ninja is gold, so you can always find yourself.'],
+  },
 
   mount(ctx) {
     const { h, el, avatar } = ctx;
-    const CW = 760, CH = 484;          // canvas size in CSS pixels
-    const PX = 50, PY = 58, U = 5.5;   // pitch origin and pixels per field unit
+    let CW = 760, CH = 484;            // logical canvas size: resized to fill the screen
+    let PX = 50, PY = 58;              // pitch origin
+    const U = 5.5;                     // pixels per field unit
+    let scale = 1;
     const TEAM = [
       { name: 'Blue', main: '#3b82f6', light: '#93c5fd', dark: '#1d4ed8', css: 'blue' },
       { name: 'Red', main: '#ef4444', light: '#fca5a5', dark: '#b91c1c', css: 'red' },
@@ -44,7 +52,8 @@ ClubDojoMinigames.register({
     let lastSent = '';
 
     const style = h('style', {}, `
-      .sc3 { display: flex; flex-direction: column; align-items: center; gap: 8px; height: 100%; padding: 6px; box-sizing: border-box; }
+      .sc3 { position: absolute; inset: 0; overflow: hidden; background: #1b2230; }
+      .sc3-top { position: absolute; top: 4px; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; pointer-events: none; z-index: 1; }
       .sc3-board { display: flex; align-items: stretch; justify-content: center; gap: 0; font-family: var(--display); border-radius: 12px; overflow: hidden; box-shadow: 0 4px 0 rgba(0,0,0,.35); }
       .sc3-team { display: flex; align-items: center; gap: 8px; padding: 4px 12px; color: #fff; font-size: 18px; }
       .sc3-team.blue { background: linear-gradient(90deg, #1d4ed8, #3b82f6); }
@@ -55,20 +64,12 @@ ClubDojoMinigames.register({
       .sc3-clock { background: #13151b; color: #fff; padding: 4px 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 78px; font-size: 22px; }
       .sc3-clock small { font-size: 11px; letter-spacing: 1px; opacity: .75; }
       .sc3-clock.golden { background: linear-gradient(180deg, #f7c948, #d99a00); color: #2b1d00; }
-      .sc3-status { font-size: 14px; opacity: .9; min-height: 18px; text-align: center; }
-      .sc3-canvas { width: min(${CW}px, 100%); height: auto; aspect-ratio: ${CW} / ${CH}; border-radius: 12px; box-shadow: 0 6px 0 rgba(0,0,0,.35); background: #0f1a12; }
-      .sc3-help { font-size: 12px; opacity: .75; text-align: center; }
-      .sc3-help kbd { font-family: inherit; background: rgba(255,255,255,.15); border-radius: 4px; padding: 0 5px; }
+      .sc3-status { font-size: 14px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.9); min-height: 18px; text-align: center; }
     `);
     const board = h('div', { class: 'sc3-board' }, h('div', { class: 'sc3-clock' }, 'Get ready…'));
     const status = h('div', { class: 'sc3-status' }, '');
     const canvas = h('canvas', { class: 'sc3-canvas' });
-    const help = h('div', { class: 'sc3-help' },
-      h('kbd', {}, 'WASD'), ' / arrows move · ', h('kbd', {}, 'Space'), ' shoots where you run · ',
-      h('kbd', {}, 'Shift'), ' dashes and shoves · grab ⚡ Speed Boots and 🔥 Fire Shots in midfield');
-    el.append(style, h('div', { class: 'sc3' }, board, status, canvas, help));
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    canvas.width = CW * dpr; canvas.height = CH * dpr;
+    el.append(style, h('div', { class: 'sc3' }, canvas, h('div', { class: 'sc3-top' }, board, status)));
     const g = canvas.getContext('2d');
 
     const X = (x) => PX + x * U;
@@ -132,9 +133,9 @@ ClubDojoMinigames.register({
     // ---------- static background: stands, boards and the pitch ----------
     const bg = document.createElement('canvas');
     function paintBackground() {
-      bg.width = CW * dpr; bg.height = CH * dpr;
+      bg.width = canvas.width; bg.height = canvas.height;
       const b = bg.getContext('2d');
-      b.setTransform(dpr, 0, 0, dpr, 0, 0);
+      b.setTransform(scale, 0, 0, scale, 0, 0);
       const W = field.w * U, H = field.h * U;
       // stadium bowl
       const bowl = b.createLinearGradient(0, 0, 0, CH);
@@ -144,6 +145,25 @@ ClubDojoMinigames.register({
       b.fillStyle = 'rgba(255,255,255,.04)';
       for (let y = 4; y < PY - 12; y += 9) b.fillRect(0, y, CW, 4);
       for (let y = PY + H + 14; y < CH; y += 9) b.fillRect(0, y, CW, 4);
+      // End stands fill any room left beside the pitch. These fans are painted once.
+      const sideGap = PX - 36;
+      if (sideGap > 8) {
+        let n = 7;
+        for (const [x0, x1, side] of [[2, sideGap, 0], [CW - sideGap, CW - 2, 1]]) {
+          b.fillStyle = 'rgba(255,255,255,.04)';
+          for (let x = x0; x < x1; x += 11) b.fillRect(x, PY - 16, 5, H + 32);
+          for (let y = PY - 12; y < PY + H + 14; y += 9) {
+            for (let x = x0 + 4 + (Math.round(y) % 2) * 4; x < x1 - 2; x += 10.5) {
+              n = (n * 16807) % 2147483647;
+              if (n % 6 === 0) continue;
+              b.fillStyle = n % 10 < 7 ? SHIRTS[side * 3 + (n % 3)] : SHIRTS[6 + (n % 4)];
+              b.beginPath(); b.ellipse(x, y + 4, 3.4, 2.8, 0, Math.PI, 0); b.fill();
+              b.fillStyle = SKIN[n % SKIN.length];
+              b.beginPath(); b.arc(x, y, 2.3, 0, Math.PI * 2); b.fill();
+            }
+          }
+        }
+      }
       // track around the pitch
       b.fillStyle = '#2f6b3a';
       b.fillRect(PX - 30, PY - 12, W + 60, H + 24);
@@ -433,6 +453,29 @@ ClubDojoMinigames.register({
       g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + hh, r); g.arcTo(x + w, y + hh, x, y + hh, r);
       g.arcTo(x, y + hh, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
     }
+    // Each ninja gets an outline in their team's color: draw them once off-screen, make a solid
+    // silhouette of that, and stamp the silhouette around the ninja before drawing them on top.
+    const CELL = 92, CELL_FEET = 78, OUTLINE = 2;
+    const OFFSETS = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
+    const spriteCv = document.createElement('canvas'), tintCv = document.createElement('canvas');
+    const spriteG = spriteCv.getContext('2d'), tintG = tintCv.getContext('2d');
+    function sizeOutlineCanvases() { spriteCv.width = tintCv.width = spriteCv.height = tintCv.height = Math.ceil(CELL * scale); }
+    function drawOutlined(i, x, feet, facing, walking, now, color) {
+      spriteG.setTransform(scale, 0, 0, scale, 0, 0);
+      spriteG.clearRect(0, 0, CELL, CELL);
+      const geo = avatar.draw(spriteG, loadouts[i], { x: CELL / 2, y: CELL_FEET, size: 30, facing, walking, time: now, shadow: false });
+      tintG.setTransform(1, 0, 0, 1, 0, 0);
+      tintG.globalCompositeOperation = 'copy';
+      tintG.drawImage(spriteCv, 0, 0);
+      tintG.globalCompositeOperation = 'source-in';
+      tintG.fillStyle = color;
+      tintG.fillRect(0, 0, tintCv.width, tintCv.height);
+      const dx = x - CELL / 2, dy = feet - CELL_FEET;
+      for (const [ox, oy] of OFFSETS) g.drawImage(tintCv, dx + ox * OUTLINE, dy + oy * OUTLINE, CELL, CELL);
+      g.drawImage(spriteCv, dx, dy, CELL, CELL);
+      return { ...geo, cx: geo.cx + dx, top: geo.top + dy, feet: geo.feet + dy };
+    }
+
     function drawPlayer(i, now, dt) {
       const slot = roster[i];
       const p = shown.p[i];
@@ -491,7 +534,7 @@ ClubDojoMinigames.register({
       }
 
       const facing = fx > 0.3 ? 1 : (fx < -0.3 ? -1 : 0);
-      const geo = avatar.draw(g, loadouts[i], { x, y: feet, size: 30, facing, walking: moving, time: now, shadow: false });
+      const geo = drawOutlined(i, x, feet, facing, moving, now, team.main);
 
       // kick swoosh
       if (kickT < 0.2) {
@@ -576,7 +619,7 @@ ClubDojoMinigames.register({
     }
 
     function drawFrame(now, dt) {
-      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.setTransform(scale, 0, 0, scale, 0, 0);
       g.clearRect(0, 0, CW, CH);
       if (shake > 0.2) g.translate(rand(-shake, shake), rand(-shake, shake));
       shake *= Math.exp(-dt * 6);
@@ -649,8 +692,13 @@ ClubDojoMinigames.register({
       stepParticles(dt);
       drawFrame(now, dt);
     }
-    paintBackground();
-    buildCrowd();
+    ctx.fit(canvas, 760, 484, (f) => {
+      CW = f.w; CH = f.h; scale = f.scale;
+      PX = 50 + (CW - 760) / 2; PY = 58 + (CH - 484) / 2;
+      sizeOutlineCanvases();
+      paintBackground();
+      buildCrowd();
+    });
     frame = requestAnimationFrame(loop);
     const hudTimer = setInterval(drawHud, 250);
 

@@ -27,7 +27,7 @@
   }
 
   // Internal render size. The canvas is scaled up with crisp pixels, like the original.
-  const VIEW_W = 400;
+  let VIEW_W = 400;                // widened to match the screen's shape, so the road fills it
   const VIEW_H = 240;
   const TEX_SCALE = 2;            // texels per world unit in the track image
   const TEX_PAD = 100;            // world units of grass around the world in the track image
@@ -69,6 +69,11 @@
 
   ClubDojoMinigames.register({
     id: 'go-kart-race',
+    guide: {
+      summary: 'Three laps against the other ninjas and CPU racers. First across the line wins.',
+      controls: [['↑ or W', 'Gas'], ['↓ or S', 'Brake'], ['← → or A / D', 'Steer'], ['Space or Shift', 'Hold while turning to drift']],
+      tips: ['Let go of a drift when the sparks turn blue or orange for a speed boost.', 'Orange pads on the track boost you too.', 'Grass slows you down a lot, so stay on the road.'],
+    },
 
     mount(ctx) {
       const { h, el, avatar } = ctx;
@@ -76,13 +81,14 @@
       const later = (ms, fn) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); return t; };
 
       const style = h('style', {}, `
-        .gk { display: flex; flex-direction: column; align-items: center; gap: 8px; height: 100%; padding: 6px; box-sizing: border-box; }
-        .gk-players { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
-        .gk-p { display: flex; flex-direction: column; align-items: center; background: rgba(255,255,255,.08); border-radius: 10px; padding: 4px 8px; min-width: 80px; transition: opacity .3s; }
+        .gk { position: absolute; inset: 0; overflow: hidden; }
+        .gk-players { position: absolute; left: 1%; top: 44%; display: flex; flex-direction: column; gap: 4px; z-index: 3; pointer-events: none; }
+        .gk-p { display: flex; flex-direction: row; align-items: center; gap: 6px; background: rgba(0,0,0,.4); border-radius: 10px; padding: 2px 8px 2px 2px; transition: opacity .3s; color: #fff; }
+        .gk-p canvas, .gk-p .cpu { width: 30px !important; height: 30px !important; font-size: 16px !important; }
         .gk-p.out { opacity: .45; }
         .gk-p b { font-size: 12px; } .gk-p small { opacity: .85; }
-        .gk-stage { position: relative; width: min(900px, 100%); flex: 1 1 auto; min-height: 0; display: flex; justify-content: center; align-items: center; }
-        .gk-view { position: relative; width: 100%; aspect-ratio: ${VIEW_W} / ${VIEW_H}; container-type: inline-size; }
+        .gk-stage { position: absolute; inset: 0; }
+        .gk-view { position: absolute; inset: 0; container-type: inline-size; }
         /* HUD over the view. Sizes are in cqw (percent of the view's width) so it scales with it. */
         .gk-hud { position: absolute; inset: 0; pointer-events: none; font-family: var(--display); color: #fff; letter-spacing: .03em;
           text-shadow: 0 .25cqw 0 rgba(0,0,0,.55), 0 0 .6cqw rgba(0,0,0,.45); }
@@ -114,12 +120,11 @@
         .gk-banner.warn { color: #ffd23f; font-size: 6.5cqw; animation: gk-blink .5s steps(2) infinite; }
         .gk-banner small { display: block; font-size: 3.2cqw; margin-top: .6cqw; }
         @keyframes gk-blink { 50% { opacity: .25; } }
-        .gk-canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; border-radius: 12px; box-shadow: 0 6px 0 rgba(0,0,0,.35); background: ${COLORS.grass}; }
-        .gk-tags { position: absolute; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; border-radius: 12px; }
+        .gk-canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; background: ${COLORS.grass}; }
+        .gk-tags { position: absolute; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
         .gk-hud, .gk-map { z-index: 2; }
         .gk-tag { position: absolute; transform: translate(-50%, -100%); white-space: nowrap; font: 600 clamp(9px, 1.2vw + 5px, 12px) system-ui, sans-serif; color: #fff; background: rgba(0,0,0,.55); border-radius: 6px; padding: 1px 6px; border-bottom: 2px solid var(--kc, #fff); }
         .gk-map { position: absolute; right: 2%; top: 3%; width: 24%; aspect-ratio: 1000 / 640; opacity: .9; border-radius: 6px; background: rgba(0,0,0,.25); }
-        .gk-help { font-size: 12px; opacity: .75; text-align: center; }
       `);
 
       // HUD: place, lap, timer and speed, plus a centre banner for GO!, laps, wrong way and the finish.
@@ -169,15 +174,17 @@
       const view = h('div', { class: 'gk-view' }, canvas, tagLayer, mapCanvas, hud);
       const stage = h('div', { class: 'gk-stage' }, view);
       const playersRow = h('div', { class: 'gk-players' });
-      const help = h('div', { class: 'gk-help' }, 'Drive: Arrow keys or WASD. Up / W gas, Down / S brake, Left and Right to steer. '
-        + 'Hold Space or Shift while turning to drift; let go once the sparks turn blue or orange for a boost. Orange pads boost too.');
-      el.append(style, h('div', { class: 'gk' }, playersRow, stage, help));
+      el.append(style, h('div', { class: 'gk' }, stage, playersRow));
 
-      // Keep the 5:3 view inside the stage at any window shape (CSS alone can't fit both axes).
+      // The view always fills the stage: its height stays VIEW_H and its width follows the stage's shape.
       function fitView() {
         const r = stage.getBoundingClientRect();
-        const w = Math.max(0, Math.min(r.width, (r.height * VIEW_W) / VIEW_H));
-        view.style.width = `${w}px`;
+        if (!r.width || !r.height) return;
+        const w = Math.max(320, Math.min(720, Math.round((VIEW_H * r.width) / r.height / 2) * 2));
+        if (w === canvas.width) return;
+        VIEW_W = w;
+        canvas.width = w;
+        if (floor) { floor = g.createImageData(VIEW_W, VIEW_H); floor32 = new Uint32Array(floor.data.buffer); }
       }
       const resizer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fitView) : null;
       if (resizer) resizer.observe(stage);

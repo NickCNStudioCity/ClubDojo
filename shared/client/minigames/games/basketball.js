@@ -5,11 +5,16 @@
 // use the hold buttons), tap the court to shoot.
 ClubDojoMinigames.register({
   id: 'basketball',
+  guide: {
+    summary: 'Four courts, one for each ninja, with bots on any empty ones. Score the most before time runs out.',
+    controls: [['A / D or ← →', 'Move along your court'], ['Space or Enter', 'Shoot when the marker is on the meter'], ['Touch', 'Drag your court to move, tap to shoot']],
+    tips: ['Green on the meter is a good shot. Gold is perfect.', 'Shots from far away are worth three.', 'Streaks set you on fire, and the final 10 seconds count double.'],
+  },
 
   mount(ctx) {
     const { h, el, avatar } = ctx;
-    const W = 720, LH = 132, COURTS = 4, H = LH * COURTS;
-    const HX = W * 0.9;                 // hoop centre x
+    const COURTS = 4;
+    let W = 720, LH = 132, H = LH * COURTS, HX = W * 0.9, scale = 1;   // resized to fill the screen; HX is the hoop centre x
     const HY = 34;                      // hoop height inside a court
     const GREEN = 0.12, PERFECT = 0.04, PERIOD = 1.1;
     const MARGIN = 0.05;
@@ -46,24 +51,18 @@ ClubDojoMinigames.register({
     let dir = 0;                // the direction last sent to the server
 
     const style = h('style', {}, `
-      .bb { display: flex; flex-direction: column; align-items: center; gap: 8px; height: 100%; padding: 6px; box-sizing: border-box; }
-      .bb-hud { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; width: min(720px, 100%); }
-      .bb-chip { font-family: var(--display); font-size: 15px; padding: 4px 10px; border-radius: 999px; background: rgba(0,0,0,.35); color: #fff; white-space: nowrap; }
-      .bb-chip.you { background: #ffd23f; color: #3a2400; }
-      .bb-chip b { color: #ffd23f; }
-      .bb-chip.you b { color: #3a2400; }
-      .bb-status { font-family: var(--display); font-size: 20px; min-height: 28px; text-align: center; }
-      .bb-stage { position: relative; width: min(720px, 100%); }
-      .bb-canvas { width: 100%; height: auto; display: block; border-radius: 14px; box-shadow: 0 6px 0 rgba(0,0,0,.35); touch-action: none; user-select: none; }
-      .bb-final .bb-canvas { animation: bb-pulse .6s ease-in-out infinite alternate; }
-      @keyframes bb-pulse { from { box-shadow: 0 6px 0 rgba(0,0,0,.35), 0 0 0 0 rgba(255,210,63,.0); } to { box-shadow: 0 6px 0 rgba(0,0,0,.35), 0 0 28px 6px rgba(255,210,63,.75); } }
-      .bb-btns { display: flex; gap: 10px; align-items: center; justify-content: center; width: min(720px, 100%); }
+      .bb { position: absolute; inset: 0; overflow: hidden; }
+      .bb-status { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); font-family: var(--display); font-size: 20px; color: #fff; text-align: center; white-space: nowrap;
+        background: rgba(0,0,0,.45); border-radius: 12px; padding: 2px 14px; pointer-events: none; z-index: 1; }
+      .bb-canvas { touch-action: none; user-select: none; }
+      .bb-final::after { content: ''; position: absolute; inset: 0; pointer-events: none; animation: bb-pulse .6s ease-in-out infinite alternate; }
+      @keyframes bb-pulse { from { box-shadow: inset 0 0 0 0 rgba(255,210,63,0); } to { box-shadow: inset 0 0 44px 8px rgba(255,210,63,.75); } }
+      .bb-btns { position: absolute; left: 0; right: 0; bottom: 34px; display: flex; gap: 10px; align-items: center; justify-content: center; z-index: 1; }
       .bb-pad { min-width: 84px; touch-action: none; user-select: none; -webkit-user-select: none; }
       .bb-shoot { min-width: 130px; font-size: 18px; }
-      .bb-help { font-size: 12px; opacity: .75; text-align: center; max-width: 720px; }
-      @media (max-width: 600px) { .bb-status { font-size: 17px; } .bb-chip { font-size: 13px; } }
+      @media (hover: hover) and (pointer: fine) { .bb-btns { display: none; } }
+      @media (max-width: 600px) { .bb-status { font-size: 16px; } }
     `);
-    const hud = h('div', { class: 'bb-hud' });
     const status = h('div', { class: 'bb-status' }, 'Get ready...');
     const canvas = h('canvas', { class: 'bb-canvas', width: W, height: H });
     const c2 = canvas.getContext('2d');
@@ -75,10 +74,8 @@ ClubDojoMinigames.register({
     const btnLeft = holdBtn('◀ Left', 'L');
     const btnShoot = h('button', { class: 'btn small bb-shoot', tabindex: '-1', onpointerdown: (e) => { e.preventDefault(); shoot(); } }, 'Shoot');
     const btnRight = holdBtn('Right ▶', 'R');
-    const help = h('div', { class: 'bb-help' },
-      'Keyboard: A/D or ← → to move, Space or Enter to shoot. Touch: drag your court to move, tap to shoot, or use the buttons. Green is good, gold is perfect.');
-    el.append(style, h('div', { class: 'bb' }, hud, status, h('div', { class: 'bb-stage' }, canvas),
-      h('div', { class: 'bb-btns' }, btnLeft, btnShoot, btnRight), help));
+    el.append(style, h('div', { class: 'bb' }, canvas, status, h('div', { class: 'bb-btns' }, btnLeft, btnShoot, btnRight)));
+    ctx.fit(canvas, 720, 528, (f) => { W = f.w; H = f.h; LH = H / COURTS; HX = W * 0.9; scale = f.scale; });
 
     function shoot() { ctx.send({ type: 'shoot' }); }
 
@@ -272,7 +269,7 @@ ClubDojoMinigames.register({
       const time = ts / 1000;
       shake = Math.max(0, shake - dt * 40);
 
-      c2.setTransform(1, 0, 0, 1, 0, 0);
+      c2.setTransform(scale, 0, 0, scale, 0, 0);
       c2.fillStyle = '#1b1426';
       c2.fillRect(0, 0, W, H);
       c2.save();
@@ -371,18 +368,7 @@ ClubDojoMinigames.register({
       c2.restore();
     }
 
-    function drawHud() {
-      hud.replaceChildren();
-      for (const lane of lanes) {
-        const s = state ? state.lanes.find((l) => l.id === lane.id) : null;
-        const mine = lane.id === ctx.youId;
-        const label = mine ? 'You' : lane.name;
-        hud.append(h('span', { class: `bb-chip${mine ? ' you' : ''}` }, `${label}${lane.bot ? ' 🤖' : ''} `, h('b', {}, `${s ? s.s : 0}`)));
-      }
-    }
-
     raf = requestAnimationFrame(render);
-    drawHud();
 
     return {
       onMessage(data) {
@@ -394,10 +380,8 @@ ClubDojoMinigames.register({
             if (lane) { lane.name = l.name; lane.bot = l.bot; }
             meters.set(l.id, now + (l.start - data.t));
           }
-          drawHud();
         } else if (data.type === 'state') {
           state = data;
-          drawHud();
         } else if (data.type === 'shot') {
           const lane = laneOf(data.id);
           if (!lane) return;
@@ -428,7 +412,6 @@ ClubDojoMinigames.register({
             }
             status.textContent = bits.join(' · ');
           }
-          drawHud();
         } else if (data.type === 'final') {
           finalOn = true;
           el.querySelector('.bb')?.classList.add('bb-final');
@@ -437,7 +420,6 @@ ClubDojoMinigames.register({
           const lane = laneOf(data.id);
           if (lane) lane.bot = true;
           if (data.id !== ctx.youId) status.textContent = `${data.name} left. A bot is playing their court.`;
-          drawHud();
         }
       },
       onResults() {},

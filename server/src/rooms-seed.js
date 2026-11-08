@@ -190,51 +190,59 @@ function sportsPark() {
   };
 }
 
-// Grotto: a rocky yard south of the Forest Village. The Cart Surfer cave is a building on the
-// north side, like the hub buildings. Its door leads into the cave room (cave()).
-// Layout: building x 15-24, y 3-8; door portal (19-20, 9); path down to the village gate at the bottom.
+// Grotto: a leafy yard south of the Forest Village. A rocky hill on the north side has a cave mouth
+// that leads into the cave room (cave()).
+// Layout: hill x 15-24, y 3-8; cave mouth portal (19-20, 9); path down to the village gate at the bottom.
 function grotto() {
   const GW = 40;
   const g = grid('g');
   rect(g, 0, 0, GW, 3, '#'); // rock backdrop along the top
-  rect(g, 15, 3, 10, 6, '#'); // the cave building (drawn by the building prop)
+  rect(g, 15, 3, 10, 6, '#'); // the rocky hill (drawn by the cave prop)
   rect(g, 0, 3, 1, H - 3, '#'); // west edge
   rect(g, GW - 1, 3, 1, H - 3, '#'); // east edge
   rect(g, 0, H - 1, GW, 1, '#'); // south edge, gap at the entrance
   rect(g, 13, 23, 2, 1, ':'); // entrance (portal back to the village)
-  rect(g, 19, 9, 2, 1, ':'); // path from the cave door
+  rect(g, 19, 9, 2, 1, ':'); // path from the cave mouth
   rect(g, 13, 10, 14, 1, ':'); // yard path across the front of the cave
   rect(g, 13, 11, 2, 12, ':'); // path down to the gate
   rect(g, 27, 15, 6, 4, ':'); // gravel patch
   for (const [x, y, w, h] of [[4, 14, 4, 2], [6, 19, 3, 2], [31, 12, 4, 2]]) rect(g, x, y, w, h, '#'); // boulders
+  // Flower beds. Only open grass is planted, so paths and boulders stay clear.
+  const beds = [[2, 7, 5, 2], [8, 7, 4, 2], [28, 7, 5, 2], [34, 7, 3, 2], [3, 12, 6, 1], [16, 12, 7, 2], [25, 12, 5, 2], [36, 11, 2, 2],
+    [16, 16, 8, 2], [9, 16, 3, 3], [34, 16, 4, 2], [2, 21, 4, 1], [16, 22, 8, 1], [27, 20, 8, 1]];
+  for (const [bx, by, bw, bh] of beds) for (let y = by; y < by + bh; y++) for (let x = bx; x < bx + bw; x++) if (g[y][x] === 'g') g[y][x] = 'f';
+  // Trees through the yard, kept clear of the paths and signs.
+  const yardTrees = [[2, 5], [4, 4], [7, 5], [10, 4], [12, 6], [27, 5], [30, 4], [33, 5], [36, 4], [37, 7], [2, 10], [5, 11], [9, 9], [11, 12],
+    [3, 17], [10, 14], [11, 18], [3, 20], [9, 22], [18, 14], [22, 13], [24, 18], [17, 20], [21, 21], [26, 21], [30, 21], [35, 19], [36, 15], [29, 10], [33, 9]];
   const trees = [];
+  for (const [x, y] of yardTrees) { g[y][x] = '#'; trees.push({ type: 'tree', x, y, style: (x + y) % 3 === 0 ? 'pine' : 'leafy' }); }
   for (let y = 3; y < H - 1; y++) for (const x of [0, GW - 1]) if (g[y][x] === '#') trees.push({ type: 'tree', x, y, style: y % 2 ? 'pine' : 'leafy' });
   return {
     id: 'grotto',
     name: 'Grotto',
-    seedVersion: 9,
+    seedVersion: 12, // v12 turns the cave building into a cave mouth in a rocky hill, and adds trees and flowers
     width: GW,
     height: H,
     tiles: rows(g),
     spawn: { x: 14, y: 20 },
     portals: [
       { x: 13, y: 23, w: 2, h: 1, to: 'plaza', tx: 14, ty: 21, label: 'Forest Village' },
-      { x: 19, y: 9, w: 2, h: 1, to: 'cave', tx: 20, ty: 20, label: 'Cart Surfer Cave' },
+      { x: 19, y: 9, w: 2, h: 1, to: 'cave', tx: 20, ty: 20, label: 'Cave' },
     ],
     minigames: [],
     props: [
       { type: 'forest', x: 0, y: 0, w: GW, h: 3 },
       ...trees,
-      { type: 'building', x: 15, y: 3, w: 10, h: 6, label: 'CAVE', color: '#5d5a63', roof: '#2a2430' },
+      { type: 'cave', x: 15, y: 3, w: 10, h: 6 },
       { type: 'lantern', x: 13, y: 9 },
       { type: 'lantern', x: 26, y: 9 },
       { type: 'sign', x: 11, y: 21, text: 'Grotto' },
-      { type: 'sign', x: 17, y: 11, text: 'Cart Surfer Cave' },
+      { type: 'sign', x: 17, y: 11, text: 'Cave' },
     ],
   };
 }
 
-// Cart Surfer cave: a room inside the Grotto building. The mine booth is on the open side;
+// The cave: the room behind the cave mouth in the Grotto. The mine booth is on the open side;
 // the right side is a closed-off section behind a rockfall.
 function cave() {
   const g = grid(',');
@@ -248,7 +256,8 @@ function cave() {
   rect(g, 30, 10, 9, 1, '#');
   return {
     id: 'cave',
-    name: 'Cart Surfer Cave',
+    name: 'Cave',
+    seedVersion: 12, // v12 renames it to just Cave
     width: W,
     height: H,
     tiles: rows(g),
@@ -270,5 +279,5 @@ function cave() {
 function seedRooms() {
   return [plaza(), dojo(), ramen(), sportsPark(), grotto(), cave()];
 }
-seedRooms.SEED_VERSION = 9;
+seedRooms.SEED_VERSION = 12;
 module.exports = seedRooms;

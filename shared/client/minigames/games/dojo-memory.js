@@ -2,6 +2,11 @@
 // Server rules: server/src/minigames/games/dojo-memory.js
 ClubDojoMinigames.register({
   id: 'dojo-memory',
+  guide: {
+    summary: 'Watch the scrolls light up, then repeat the pattern. It gets one step longer every round. The last ninja standing wins.',
+    controls: [['Mouse or touch', 'Tap the scrolls in the same order'], ['1 to 9', 'Tap a scroll with the number keys']],
+    tips: ['One wrong scroll puts you out, and so does running out of time.', 'Saying the numbers to yourself makes long patterns easier.'],
+  },
 
   mount(ctx) {
     const { h, el, avatar } = ctx;
@@ -10,16 +15,17 @@ ClubDojoMinigames.register({
     const later = (ms, fn) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); return t; };
 
     const style = h('style', {}, `
-      .dm { display: flex; flex-direction: column; align-items: center; gap: 14px; height: 100%; padding: 8px; }
+      .dm { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2vh; padding: 8px; box-sizing: border-box; --s: min(24vh, 20vw);
+        background: radial-gradient(ellipse at 50% 35%, #7a4a30 0%, #47291c 55%, #26150f 100%); }
       .dm-players { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
       .dm-p { display: flex; flex-direction: column; align-items: center; background: rgba(255,255,255,.08); border-radius: 12px; padding: 6px 10px; min-width: 92px; transition: opacity .3s; }
       .dm-p.out { opacity: .4; }
       .dm-p.cleared { box-shadow: 0 0 0 2px var(--good); }
       .dm-p b { font-size: 13px; } .dm-p small { opacity: .8; }
-      .dm-status { font-family: var(--display); font-size: 28px; letter-spacing: .05em; min-height: 36px; text-align: center; }
+      .dm-status { font-family: var(--display); font-size: clamp(26px, 5vh, 52px); letter-spacing: .05em; min-height: 36px; text-align: center; }
       .dm-timer { width: min(420px, 90%); height: 8px; background: rgba(255,255,255,.15); border-radius: 999px; overflow: hidden; }
       .dm-timer i { display: block; height: 100%; width: 100%; background: var(--gold); transform-origin: left; }
-      .dm-grid { display: grid; grid-template-columns: repeat(3, minmax(80px, 120px)); gap: 14px; }
+      .dm-grid { display: grid; grid-template-columns: repeat(3, var(--s)); gap: 2.4vh; }
       .dm-scroll { aspect-ratio: 3 / 4; border: 0; border-radius: 14px; cursor: pointer; position: relative; font: inherit; font-weight: 800; color: rgba(255,255,255,.85);
         background: linear-gradient(180deg, rgba(255,255,255,.18), rgba(0,0,0,.18)), var(--c); filter: brightness(.55) saturate(.8); transition: filter .12s, transform .12s; box-shadow: 0 4px 0 rgba(0,0,0,.35); }
       .dm-scroll::before, .dm-scroll::after { content: ''; position: absolute; left: -6px; right: -6px; height: 12px; border-radius: 6px; background: #6b4226; }
@@ -51,7 +57,7 @@ ClubDojoMinigames.register({
     let iAmOut = false;
 
     function buildScrolls(n) {
-      grid.style.gridTemplateColumns = `repeat(${n <= 4 ? 2 : 3}, minmax(80px, 120px))`;
+      grid.style.gridTemplateColumns = `repeat(${n <= 4 ? 4 : Math.ceil(n / 2)}, var(--s))`;
       scrolls = Array.from({ length: n }, (_, i) => h('button', {
         class: 'dm-scroll', style: { '--c': SCROLL_COLORS[i % SCROLL_COLORS.length] }, 'aria-label': `Scroll ${i + 1}`, disabled: true,
         onclick: () => tap(i),

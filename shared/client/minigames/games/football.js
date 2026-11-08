@@ -3,11 +3,18 @@
 // else watches the kick. Server rules: server/src/minigames/games/football.js
 ClubDojoMinigames.register({
   id: 'football',
+  guide: {
+    summary: 'Field goals, taken in turns. Everyone gets five kicks. Solo games add a bot to beat.',
+    controls: [['↑ ↓ or W / S', 'Set the distance on your turn'], ['Space or Enter', 'Start the aim meter, then press again to lock it']],
+    tips: ['Lock the marker in the green zone. It already allows for the wind.', 'Longer kicks score more but have a narrower green zone.', 'Each turn has a time limit, so keep an eye on the clock.'],
+  },
 
   mount(ctx) {
     const { h } = ctx;
     const el = ctx.el;
-    const CW = 480, CH = 340;
+    const CW = 480, CH = 340;                     // the field; the canvas grows around it to fill the screen
+    let viewW = CW, viewH = CH, ox = 0, oy = 0, scale = 1;
+    const bg = document.createElement('canvas');
     const POST_L = 190, POST_R = 290, BAR_Y = 70; // uprights and crossbar
     const CENTRE = (POST_L + POST_R) / 2;
     const PX_PER_YD = 10;                         // how far the ball drifts per yard of error
@@ -26,15 +33,15 @@ ClubDojoMinigames.register({
     const counts = new Map();
 
     const style = h('style', {}, `
-      .fb { display: flex; flex-direction: column; align-items: center; gap: 8px; height: 100%; padding: 6px; box-sizing: border-box; }
+      .fb { position: absolute; inset: 0; overflow: hidden; }
+      .fb-top { position: absolute; top: 8px; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; z-index: 1; }
       .fb-hud { display: flex; gap: 8px; font-family: var(--display); font-size: 15px; justify-content: center; flex-wrap: wrap; }
-      .fb-chip { padding: 4px 10px; border-radius: 999px; background: rgba(0,0,0,.25); }
+      .fb-chip { padding: 4px 10px; border-radius: 999px; background: rgba(0,0,0,.45); color: #fff; }
       .fb-chip.on { background: #f5d33a; color: #222; }
-      .fb-status { font-family: var(--display); font-size: 20px; min-height: 28px; text-align: center; }
-      .fb-canvas { width: min(560px, 100%); height: auto; aspect-ratio: ${CW} / ${CH}; border-radius: 12px; box-shadow: 0 6px 0 rgba(0,0,0,.35); touch-action: none; }
-      .fb-btns { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
-      .fb-help { font-size: 12px; opacity: .75; text-align: center; }
-      .fb-dist { font-family: var(--display); font-size: 20px; }
+      .fb-status { font-family: var(--display); font-size: 20px; text-align: center; color: #fff; text-shadow: 0 2px 3px rgba(0,0,0,.7); }
+      .fb-canvas { touch-action: none; }
+      .fb-ctl { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; align-items: stretch; gap: 8px; z-index: 1; text-align: center; }
+      .fb-dist { font-family: var(--display); font-size: 22px; color: #fff; text-shadow: 0 2px 3px rgba(0,0,0,.7); }
     `);
     const hud = h('div', { class: 'fb-hud' });
     const status = h('div', { class: 'fb-status' }, 'Waiting for the first kick...');
@@ -44,8 +51,37 @@ ClubDojoMinigames.register({
     const btnLess = h('button', { class: 'btn small', onclick: () => setDist(-1) }, 'Shorter');
     const btnMore = h('button', { class: 'btn small', onclick: () => setDist(1) }, 'Longer');
     const btnKick = h('button', { class: 'btn', onclick: () => press() }, 'Kick (Space)');
-    const help = h('div', { class: 'fb-help' }, 'On your turn: up and down (or W and S) set the distance. Space starts the meter, Space again locks it. Aim in the green zone, which already allows for the wind.');
-    el.append(style, h('div', { class: 'fb' }, hud, status, canvas, distLabel, h('div', { class: 'fb-btns' }, btnLess, btnMore, btnKick), help));
+    el.append(style, h('div', { class: 'fb' }, canvas, h('div', { class: 'fb-top' }, hud, status), h('div', { class: 'fb-ctl' }, distLabel, btnMore, btnLess, btnKick)));
+
+    // The grass runs to every edge of the screen, with stands beyond the sidelines.
+    function paintBg() {
+      bg.width = canvas.width; bg.height = canvas.height;
+      const b = bg.getContext('2d');
+      b.setTransform(scale, 0, 0, scale, 0, 0);
+      b.fillStyle = '#4f9b3f'; b.fillRect(0, 0, viewW, viewH);
+      for (let i = -Math.ceil((oy + 100) / 30); (100 + oy + i * 30) < viewH; i++) {
+        if (100 + oy + i * 30 + 30 <= 100 + oy) continue;
+        b.fillStyle = i % 2 ? '#56a646' : '#4f9b3f'; b.fillRect(0, 100 + oy + i * 30, viewW, 30);
+      }
+      const edge = ox - 8;
+      if (edge > 0) {
+        for (const [x0, x1] of [[0, edge], [viewW - edge, viewW]]) {
+          b.fillStyle = '#2b3442'; b.fillRect(x0, 0, x1 - x0, viewH);
+          b.fillStyle = 'rgba(255,255,255,.05)';
+          for (let y = 6; y < viewH; y += 14) b.fillRect(x0, y, x1 - x0, 6);
+          const cols = ['#e8453c', '#f5c542', '#3b82f6', '#ffffff', '#22c55e'];
+          let n = 1;
+          for (let y = 12; y < viewH; y += 14) for (let x = x0 + 7 + ((y / 14) % 2) * 6; x < x1 - 4; x += 13) {
+            n = (n * 16807) % 2147483647;
+            if (n % 5 === 0) continue;
+            b.fillStyle = cols[n % cols.length]; b.beginPath(); b.arc(x, y, 3.6, Math.PI, 0); b.fill();
+            b.fillStyle = '#f1d3b3'; b.beginPath(); b.arc(x, y - 4.5, 2.4, 0, Math.PI * 2); b.fill();
+          }
+        }
+        b.fillStyle = 'rgba(0,0,0,.3)'; b.fillRect(edge - 3, 0, 3, viewH); b.fillRect(viewW - edge, 0, 3, viewH);
+      }
+    }
+    ctx.fit(canvas, CW, CH, (f) => { viewW = f.w; viewH = f.h; scale = f.scale; ox = (viewW - CW) / 2; oy = (viewH - CH) / 2; paintBg(); });
 
     function setButtons() {
       btnLess.disabled = btnMore.disabled = btnKick.disabled = !myTurn;
@@ -78,11 +114,9 @@ ClubDojoMinigames.register({
     const halfWidth = (d) => Math.max(1.2, 4 - (d - 20) * 0.05);
 
     function drawField() {
-      c2.fillStyle = '#4f9b3f'; c2.fillRect(0, 0, CW, CH);
-      for (let i = 0; i < 8; i++) { c2.fillStyle = i % 2 ? '#56a646' : '#4f9b3f'; c2.fillRect(0, 100 + i * 30, CW, 30); }
       c2.strokeStyle = 'rgba(255,255,255,.8)'; c2.lineWidth = 2;
-      c2.beginPath(); c2.moveTo(40, 0); c2.lineTo(40, CH); c2.stroke();
-      c2.beginPath(); c2.moveTo(CW - 40, 0); c2.lineTo(CW - 40, CH); c2.stroke();
+      c2.beginPath(); c2.moveTo(40, -oy); c2.lineTo(40, CH + oy); c2.stroke();
+      c2.beginPath(); c2.moveTo(CW - 40, -oy); c2.lineTo(CW - 40, CH + oy); c2.stroke();
       // Goal posts: two uprights and a crossbar.
       c2.strokeStyle = '#f5d33a'; c2.lineWidth = 6;
       c2.beginPath(); c2.moveTo(POST_L, 250); c2.lineTo(POST_L, 10); c2.stroke();
@@ -133,7 +167,9 @@ ClubDojoMinigames.register({
     }
 
     function draw(now) {
-      c2.clearRect(0, 0, CW, CH);
+      c2.setTransform(1, 0, 0, 1, 0, 0);
+      c2.drawImage(bg, 0, 0);
+      c2.setTransform(scale, 0, 0, scale, ox * scale, oy * scale);
       drawField();
       drawWind();
       drawKicker(turnId ? turnName : '');

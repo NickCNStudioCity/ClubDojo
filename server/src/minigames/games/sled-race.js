@@ -3,10 +3,12 @@
 // over trouble and land tricks. Hold tuck to go faster (but steer slower), ride close behind a
 // rival to draft, and skim past hazards for close-call bonuses.
 //
-// Courses: each day has three courses (Pine Run, Frost Gully, Summit Dash). A course's layout comes
-// from the date, so it's the same for every ninja all day, and personal bests and ghosts on the
-// client line up with the exact course. Each round picks one of the three. Set trackMode to
-// 'random' for a fresh layout every round instead.
+// Courses: every round is a freshly generated run with its own layout, mix of sections, time of day
+// and name. Set trackMode to 'daily' for three fixed courses a day instead (Pine Run, Frost Gully,
+// Summit Dash), which also turns on personal bests and ghosts per course.
+//
+// After the race nobody is kicked out: riders can sit at the finish for up to sitMs, and the results
+// come as soon as everyone has pressed Continue.
 //
 // Everything is simulated here; clients only send inputs and draw the state the server
 // broadcasts. Guide: docs/minigames/README.md
@@ -27,7 +29,11 @@ const FINISH_POINTS = [60, 40, 25, 15]; // bonus for finishing 1st, 2nd, 3rd, 4t
 const MAX_TRICKS_PER_JUMP = 2;
 const TRICK_GAP_MS = 380; // time between two tricks in one jump
 
-// The three courses. `deck` sets how often each kind of section appears.
+const NAME_A = ['Frozen', 'Whispering', 'Howling', 'Crystal', 'Moonlit', 'Thunder', 'Silver', 'Blizzard', 'Hidden', 'Ancient'];
+const NAME_B = ['Ridge', 'Gully', 'Pass', 'Chute', 'Glade', 'Summit', 'Hollow', 'Run', 'Descent', 'Drift'];
+const THEMES = ['morning', 'sunset', 'night'];
+
+// The three daily courses. `deck` sets how often each kind of section appears.
 const COURSES = [
   { id: 'pine', name: 'Pine Run', theme: 'morning',
     deck: { rocks: 5, ramp: 3, coins: 2, gate: 2, slalom: 2, boost: 2, snowball: 1, ice: 1 } },
@@ -40,7 +46,7 @@ const COURSES = [
 module.exports = {
   id: 'sled-race',
   name: 'Sled Race',
-  description: 'Race down the mountain: dodge rocks and snowballs, grab coins, hit the ramps for tricks, and beat today\'s course records.',
+  description: 'Race down a brand new run every time: dodge rocks and snowballs, grab coins and hit the ramps for tricks.',
   minPlayers: 1,
   maxPlayers: 4,
   color: '#2c8fbf',
@@ -49,10 +55,10 @@ module.exports = {
 
   // Tuning values; read through ctx.settings so admins can change them later.
   defaults: {
-    trackMode: 'daily', // 'daily': today's three courses; 'random': a new layout every round
+    trackMode: 'random', // 'random': a new course every round; 'daily': today's three fixed courses
     trackLength: 2800, // distance to the finish line
     roundMs: 75000, // time limit; anyone still sledding is ranked by distance
-    wrapMs: 4500, // pause after the last rider finishes, so everyone sees their result
+    sitMs: 60000, // how long riders may sit at the finish before the results come up
     baseSpeed: 85, // distance per second on clear snow
     steerRate: 1.15, // lane widths per second
     stunMs: 900, // slow-down after hitting a rock or snowball
@@ -81,9 +87,12 @@ module.exports = {
   create(ctx) {
     const s = ctx.settings;
     const sleds = new Map();
-    const course = COURSES[ctx.randomInt(COURSES.length)];
+    const daily = s.trackMode === 'daily';
+    const course = daily ? COURSES[ctx.randomInt(COURSES.length)] : randomCourse(ctx);
     const day = dayKey(new Date());
-    const daily = s.trackMode !== 'random';
+    const sceneSeed = ctx.randomInt(100000); // scatters the trees and drifts differently each round
+    let raceOver = false; // everyone is down, or time ran out; riders can stay until the sit timer ends
+    const leftFinish = new Set(); // riders who pressed Continue
     const rand = seededRandom(daily ? hashString(`${day}:${course.id}`) : ctx.randomInt(2 ** 31));
     const obstacles = makeTrack(rand, s.trackLength, course.deck);
     let finishCount = 0;
@@ -128,7 +137,6 @@ module.exports = {
       if (done) return;
       done = true;
       if (timeout) ctx.cancel(timeout);
-      ctx.broadcast({ type: 'over', players: snapshot() });
       ctx.end(ctx.players.map((p) => {
         const sl = sleds.get(p.id);
         if (!sl) return { id: p.id, score: 0 }; // left mid-round; the engine drops this row
@@ -142,16 +150,29 @@ module.exports = {
             hits: sl.rocks, coins: sl.coins, tricks: sl.tricks, closeCalls: sl.closeCalls, bestCombo: sl.bestCombo,
           },
         };
-      }));
+      }), { endingMs: 700 }); // the finish was already on screen, so go straight to the fade
     }
 
-    // When everyone is down, wait a moment before ending so riders see their finish (the results
-    // screen replaces the race as soon as the round ends). With nobody left, end straight away.
-    let wrapTimer = null;
+    // The race is over (everyone down, or out of time). Stop the clock and let riders stay put.
+    function stopRace() {
+      if (raceOver || done) return;
+      raceOver = true;
+      if (timeout) ctx.cancel(timeout);
+      ctx.broadcast({ type: 'over', players: snapshot(), sitMs: s.sitMs });
+      ctx.after(s.sitMs, finish);
+      checkLeft();
+    }
+    // Everyone has pressed Continue, or nobody is left: on to the results.
+    function checkLeft() {
+      if (done) return;
+      const here = [...sleds.keys()].filter(alive);
+      if (!here.length) return finish();
+      if (raceOver && here.every((id) => leftFinish.has(id))) finish();
+    }
     function checkEnd() {
-      if (done || unfinished().length > 0) return;
+      if (done || raceOver) return;
       if (![...sleds.keys()].some(alive)) return finish();
-      if (wrapTimer === null) wrapTimer = ctx.after(s.wrapMs, finish);
+      if (unfinished().length === 0) stopRace();
     }
 
     function crash(id, sl, now, kind) {
@@ -164,7 +185,7 @@ module.exports = {
     }
 
     function tick(dt) {
-      if (done) return;
+      if (done || raceOver) return;
       ticks++;
       const now = ctx.now();
       const t = now - startedAt;
@@ -258,7 +279,7 @@ module.exports = {
         startedAt = ctx.now();
         const par = (s.trackLength / s.baseSpeed) * 1000; // a clean run with no tuck and no boosts
         ctx.broadcast({
-          type: 'track', length: s.trackLength, roundMs: s.roundMs,
+          type: 'track', length: s.trackLength, roundMs: s.roundMs, seed: sceneSeed,
           course: { id: course.id, name: course.name, theme: course.theme, day, key: daily ? `${day}:${course.id}` : null },
           medals: { gold: Math.round(par * 0.8), silver: Math.round(par * 0.88), bronze: Math.round(par * 0.96) },
           obstacles: obstacles.map((ob) => {
@@ -269,11 +290,16 @@ module.exports = {
           }),
         });
         ctx.broadcast({ type: 'state', t: 0, players: snapshot() });
-        timeout = ctx.after(s.roundMs, finish);
+        timeout = ctx.after(s.roundMs, stopRace);
       },
       input(id, msg) {
         if (done || !alive(id) || !msg) return;
         const sl = sleds.get(id);
+        if (msg.type === 'done') {
+          if (raceOver || sl.finishedAt !== null) { leftFinish.add(id); checkLeft(); }
+          return;
+        }
+        if (raceOver) return;
         if (msg.type === 'steer') {
           const dir = Number(msg.dir);
           if (dir === -1 || dir === 0 || dir === 1) sl.dir = dir;
@@ -299,6 +325,7 @@ module.exports = {
         sleds.delete(id);
         ctx.broadcast({ type: 'left', id });
         checkEnd();
+        checkLeft();
       },
       dispose() {
         done = true;
@@ -306,6 +333,17 @@ module.exports = {
     };
   },
 };
+
+// A one-off course: its own name, time of day and mix of sections. Always at least two ramps.
+function randomCourse(ctx) {
+  const between = (a, b) => a + ctx.randomInt(b - a + 1);
+  return {
+    id: 'random',
+    name: `${NAME_A[ctx.randomInt(NAME_A.length)]} ${NAME_B[ctx.randomInt(NAME_B.length)]}`,
+    theme: THEMES[ctx.randomInt(THEMES.length)],
+    deck: { rocks: between(3, 6), ramp: between(2, 4), coins: between(2, 3), gate: between(1, 3), slalom: between(1, 3), boost: between(1, 3), snowball: between(1, 3), ice: between(1, 4) },
+  };
+}
 
 // Where a rolling snowball is at race time t (ms). The client uses the same formula.
 function ballX(ob, t) { return ob.x + ob.amp * Math.sin((2 * Math.PI * t) / ob.period + ob.phase); }
@@ -399,7 +437,7 @@ function makeTrack(rand, length, mix) {
   return out.sort((a, b) => a.y - b.y);
 }
 
-// Small seeded random number generator (mulberry32), so a course is the same everywhere today.
+// Small seeded random number generator (mulberry32), so a daily course is the same everywhere.
 function seededRandom(seed) {
   let a = seed >>> 0;
   return (n) => {

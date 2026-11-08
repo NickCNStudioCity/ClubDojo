@@ -16,6 +16,7 @@
   </style>
   <script src="../../shared/protocol.js"></script>
   <script src="../../shared/client/avatar.js"></script>
+  <script src="../../shared/client/minigames/host.js"></script>
 </head>
 <body>
   <div id="stage"></div>
@@ -80,7 +81,7 @@
     };
     const server = game.create(sctx);
     client = clientDef.mount({
-      el: document.getElementById('stage'), youId: 1, players, h, avatar: window.ClubDojoAvatar,
+      el: document.getElementById('stage'), fit: (...a) => window.ClubDojoFit(document.getElementById('stage'), ...a), youId: 1, players, h, avatar: window.ClubDojoAvatar,
       toast: (m) => console.log('toast', m), protocol: window.ClubDojoProtocol,
       send: (data) => server.input(1, data),
     });

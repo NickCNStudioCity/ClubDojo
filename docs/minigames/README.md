@@ -57,7 +57,7 @@ module.exports = {
 | `ctx.send(id, data)` / `ctx.broadcast(data)` | Message one player or everyone. Arrives in the client's `onMessage(data)`. Keep messages small; prefer events over full state every tick. |
 | `ctx.after(ms, fn)`, `ctx.every(ms, fn)`, `ctx.cancel(h)` | Timers. All are cleared automatically when the match ends or aborts. Use these instead of `setTimeout` so `check:minigames` can run your game on simulated time. |
 | `ctx.now()`, `ctx.randomInt(n)` | Time and randomness. Use these instead of `Date.now()` and `Math.random()` so tests stay deterministic later. |
-| `ctx.end(results)` | Finish the match: `[{ id, score }]` for every player in `ctx.players`. Call it once; extra calls are ignored. |
+| `ctx.end(results, opts)` | Finish the match: `[{ id, score }]` for every player in `ctx.players`. Call it once; extra calls are ignored. The last moments stay on screen for 3.5 seconds, then fade to the results; pass `{ endingMs }` for a shorter hold if your game already showed its ending. |
 | `ctx.isPlaying(id)` | False once a player has left. |
 
 Instance methods:
@@ -88,6 +88,9 @@ ClubDojoMinigames.register({
 | `ctx.send(data)` | Send an input to the server's `input(id, data)`. |
 | `ctx.avatar` | `draw(ctx2d, loadout, { x, y, size, facing, walking, time })` draws a ninja with accessories. `portrait(loadout, px)` returns a ready-made canvas. |
 | `ctx.h`, `ctx.toast`, `ctx.protocol` | DOM helper, toast messages, shared constants. |
+| `ctx.fit(canvas, baseW, baseH, onFit, opts)` | Makes a canvas fill the screen. The logical size grows from `baseW` x `baseH` to match the stage's shape; draw extra scenery in the spare room. `onFit({ w, h, scale })` runs now and on every resize. `opts`: `fixedHeight`, `minW`, `maxScale`. |
+
+Optional fields next to `id` and `mount`: `guide: { summary, controls: [[keys, what]], tips: [] }` adds a How to play panel to the lobby (every game should have one), `lobbyPanel({ h })` adds game-specific options to the lobby, and `ownEnding: true` turns off the host's "Round over!" tag for a game that shows its own result.
 
 Tips:
 - **Self-contained styles:** add a `<style>` element in `mount` and prefix your classes (for example `dm-` for Dojo Memory). Colors and fonts can use the game's CSS variables (`--gold`, `--display`, and so on).
