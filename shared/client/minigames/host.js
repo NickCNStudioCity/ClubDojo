@@ -270,9 +270,9 @@
           h('p', { class: 'mg-hint' }, lobby.phase === 'countdown' ? 'Starting...' : need ? `Waiting for ${need} more ninja${need > 1 ? 's' : ''}.` : 'Everyone ready starts the game, or the host can start now.'),
           lobby.phase === 'lobby' ? h('div', { class: 'mg-actions' },
             h('button', { class: `btn${mine && mine.ready ? ' ghost' : ''}`, onclick: () => conn.request('mg:ready', { ready: !(mine && mine.ready) }).then((r) => show(r.lobby)).catch((e) => toast(e.message, true)) }, mine && mine.ready ? 'Not ready' : 'Ready'),
-            isHost ? h('button', { class: 'btn', disabled: !!need, onclick: () => conn.request('mg:start').then((r) => show(r.lobby)).catch((e) => toast(e.message, true)) }, 'Start now') : null) : null,
-          extraPanel(),
-          guidePanel());
+            isHost ? h('button', { class: 'btn', disabled: !!need, onclick: () => conn.request('mg:start').then((r) => show(r.lobby)).catch((e) => toast(e.message, true)) }, 'Start now') : null) : '', // replaceChildren would print null as text
+          extraPanel() || '',
+          guidePanel() || '');
       }
     }
 
