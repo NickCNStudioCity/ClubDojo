@@ -41,7 +41,7 @@ Decision: keep the server authoritative and replace only the client renderer wit
 ## 6. Milestones
 1. ✅ **Shared track module:** move the track into a shared file, keep server behaviour identical, run `npm run check:minigames`. Done: `go-kart-mode7/track.js`. A fixed-input run gives byte-identical broadcasts.
 2. ✅ **Mode 7 floor:** render the track ground for the local player only, with no other karts. Verify in the browser at a phone width and a desktop width. Done: `go-kart-mode7/mode7.js` and a 400×240 pixelated view with a minimap (other karts show as dots there). Tests: `npm run check:mode7`. Dev harness: `scripts/dev/go-kart-harness.html` (server rules in the browser, plus bots).
-3. **Sprites:** draw remote karts as placeholder billboards with depth sort and names.
+3. ✅ **Sprites:** draw remote karts as placeholder billboards with depth sort and names. Done: `go-kart-mode7/sprites.js` draws an 8-angle placeholder sheet per kart (player colour, headband from the loadout). Every kart, yours included, is drawn back to front. Name tags are a DOM layer, so they stay sharp, and fade out with distance.
 4. ✅ **Snapshot smoothing:** interpolate remote kart positions between server snapshots. Done: fixed 60 Hz physics, 20 Hz snapshots, client renders 100 ms behind.
 5. **Polish:** sky, HUD, chase camera tuning, placeholder track art.
 6. **Stretch:** a second track, real sprites, pickups.

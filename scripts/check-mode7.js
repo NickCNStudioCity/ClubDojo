@@ -98,6 +98,18 @@ test('rgba packs like little-endian ImageData', () => {
   assert.deepStrictEqual([...new Uint8ClampedArray(px.buffer)], [10, 20, 30, 40]);
 });
 
+test('kart sprite frames: 0 from behind, 4 from the front, clockwise in between', () => {
+  const SP = require('../shared/client/minigames/games/go-kart-mode7/sprites');
+  assert.strictEqual(SP.FRAMES, 8);
+  assert.strictEqual(SP.frameFor(0), 0);
+  assert.strictEqual(SP.frameFor(Math.PI), 4);
+  assert.strictEqual(SP.frameFor(-Math.PI), 4);
+  assert.strictEqual(SP.frameFor(Math.PI / 2), 2);   // nose to the right
+  assert.strictEqual(SP.frameFor(-Math.PI / 2), 6);  // nose to the left
+  assert.strictEqual(SP.frameFor(0.3), 0);           // rounds to the nearest frame
+  assert.strictEqual(SP.frameFor(-0.5), 7);
+});
+
 console.log('Checking shared track');
 
 test('start grid sits inside the walls, just behind the line', () => {

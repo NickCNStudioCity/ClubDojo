@@ -17,7 +17,7 @@
         s.onerror = () => reject(new Error(`Missing ${file}. Update ClubDojo.`));
         document.head.append(s);
       }));
-      helpers = Promise.all([one('track.js', 'ClubDojoKartTrack'), one('mode7.js', 'ClubDojoMode7')])
+      helpers = Promise.all([one('track.js', 'ClubDojoKartTrack'), one('mode7.js', 'ClubDojoMode7'), one('sprites.js', 'ClubDojoKartSprites')])
         .catch((e) => { helpers = null; throw e; });
     }
     return helpers;
@@ -58,6 +58,8 @@
         .gk-stage { position: relative; width: min(900px, 100%); flex: 1 1 auto; min-height: 0; display: flex; justify-content: center; align-items: center; }
         .gk-view { position: relative; width: 100%; aspect-ratio: ${VIEW_W} / ${VIEW_H}; }
         .gk-canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; border-radius: 12px; box-shadow: 0 6px 0 rgba(0,0,0,.35); background: ${COLORS.grass}; }
+        .gk-tags { position: absolute; inset: 0; pointer-events: none; overflow: hidden; border-radius: 12px; }
+        .gk-tag { position: absolute; transform: translate(-50%, -100%); white-space: nowrap; font: 600 clamp(9px, 1.2vw + 5px, 12px) system-ui, sans-serif; color: #fff; background: rgba(0,0,0,.55); border-radius: 6px; padding: 1px 6px; border-bottom: 2px solid var(--kc, #fff); }
         .gk-map { position: absolute; right: 2%; top: 3%; width: 24%; aspect-ratio: 1000 / 640; opacity: .9; border-radius: 6px; background: rgba(0,0,0,.25); }
         .gk-help { font-size: 12px; opacity: .75; text-align: center; }
       `);
@@ -68,7 +70,9 @@
       const g = canvas.getContext('2d');
       const mapCanvas = h('canvas', { class: 'gk-map', width: 250, height: 160 });
       const mg = mapCanvas.getContext('2d');
-      const view = h('div', { class: 'gk-view' }, canvas, mapCanvas);
+      // Name tags are DOM, not canvas, so they stay sharp over the scaled-up pixel view.
+      const tagLayer = h('div', { class: 'gk-tags' });
+      const view = h('div', { class: 'gk-view' }, canvas, tagLayer, mapCanvas);
       const stage = h('div', { class: 'gk-stage' }, view);
       const playersRow = h('div', { class: 'gk-players' });
       const help = h('div', { class: 'gk-help' }, 'Drive: Arrow keys or WASD. Up / W gas, Down / S brake, Left and Right to steer.');
@@ -94,6 +98,7 @@
 
       let T = null;          // ClubDojoKartTrack, once loaded
       let M7 = null;         // ClubDojoMode7, once loaded
+      let SP = null;         // ClubDojoKartSprites, once loaded
       let ready = false;
       const pending = [];    // messages that arrived before the helpers loaded
       let laps = 3;
@@ -216,21 +221,40 @@
         floor32 = new Uint32Array(floor.data.buffer);
       }
 
-      // Placeholder kart, seen from behind, with its contact point on the road at (x, y).
-      function drawKartSprite(x, y, scale, color, band) {
-        const w = 22 * scale, hgt = 13 * scale; // world units, matching the server's 12-unit kart radius
-        g.fillStyle = 'rgba(0,0,0,.3)';
-        g.beginPath(); g.ellipse(x, y, w * 0.6, hgt * 0.22, 0, 0, Math.PI * 2); g.fill();
-        g.fillStyle = '#111';
-        g.fillRect(x - w / 2, y - hgt * 0.45, w * 0.22, hgt * 0.45);
-        g.fillRect(x + w / 2 - w * 0.22, y - hgt * 0.45, w * 0.22, hgt * 0.45);
-        g.fillStyle = color;
-        g.fillRect(x - w * 0.32, y - hgt * 0.75, w * 0.64, hgt * 0.55);
-        // Driver: dark head with a headband stripe.
-        g.fillStyle = '#20262e';
-        g.beginPath(); g.arc(x, y - hgt * 0.95, hgt * 0.32, 0, Math.PI * 2); g.fill();
-        g.fillStyle = band;
-        g.fillRect(x - hgt * 0.32, y - hgt * 1.02, hgt * 0.64, Math.max(1, hgt * 0.12));
+      // Every kart (yours included) as a billboard from its sprite sheet, drawn back to front.
+      // The frame depends on the kart's heading relative to the line from the camera to it.
+      const NEAR_Z = 8;      // closer than this the kart is behind or inside the camera
+      const TAG_MAX_Z = 700; // name tags fade out by this distance
+      function drawKarts(cam) {
+        const list = [];
+        for (const [id, k] of karts) {
+          if (!k.active || !k.inited || !k.sheet) continue;
+          const pt = M7.project(cam, k.shown.x, k.shown.y);
+          if (!pt || pt.z < NEAR_Z) continue;
+          list.push({ id, k, pt });
+        }
+        list.sort((a, b) => b.pt.z - a.pt.z);
+        const seen = new Set();
+        for (const { id, k, pt } of list) {
+          const s = k.sheet;
+          const toKart = Math.atan2(k.shown.y - cam.y, k.shown.x - cam.x);
+          const frame = SP.frameFor(wrapAngle(k.shown.h - toKart));
+          const px = pt.scale / s.ppu; // screen pixels per sheet pixel
+          const w = s.fw * px, hgt = s.fh * px;
+          const x = pt.x - s.ax * px, y = pt.y - s.ay * px;
+          if (x > VIEW_W || x + w < 0 || y > VIEW_H || y + hgt < 0) continue;
+          g.drawImage(s.canvas, frame * s.fw, 0, s.fw, s.fh, x, y, w, hgt);
+          if (id !== ctx.youId && pt.z < TAG_MAX_Z) {
+            seen.add(id);
+            const tag = k.tag;
+            tag.hidden = false;
+            tag.style.left = `${(pt.x / VIEW_W) * 100}%`;
+            tag.style.top = `${(y / VIEW_H) * 100}%`;
+            tag.style.opacity = String(Math.min(1, (TAG_MAX_Z - pt.z) / 200));
+            tag.style.zIndex = String(Math.round(10000 - pt.z));
+          }
+        }
+        for (const [id, k] of karts) if (k.tag && !seen.has(id)) k.tag.hidden = true;
       }
 
       function drawSky() {
@@ -295,13 +319,7 @@
         g.putImageData(floor, 0, 0, 0, top, VIEW_W, VIEW_H - top);
         drawSky();
 
-        // Local kart only (other karts come in milestone 3; they show on the minimap for now).
-        const pt = M7.project(cam, me.shown.x, me.shown.y);
-        if (pt) {
-          const player = ctx.players.find((p) => p.id === ctx.youId);
-          const band = (player && player.loadout && player.loadout.headband) || '#e8453c';
-          drawKartSprite(pt.x, pt.y, pt.scale, me.color, band);
-        }
+        drawKarts(cam);
         drawMinimap();
       }
 
@@ -348,7 +366,14 @@
             laps = m.laps;
             buildTrackImages();
             const colorById = new Map(m.karts.map((k) => [k.id, k.color]));
-            karts = new Map(ctx.players.map((p) => [p.id, { color: colorById.get(p.id) || '#999', active: true, lap: 0, progress: 0, shown: { x: 0, y: 0, h: 0 }, buf: [] }]));
+            tagLayer.textContent = '';
+            karts = new Map(ctx.players.map((p) => {
+              const color = colorById.get(p.id) || '#999';
+              const band = (p.loadout && p.loadout.headband) || '#e8453c';
+              const tag = h('div', { class: 'gk-tag', hidden: true, style: `--kc: ${color}` }, p.name);
+              tagLayer.append(tag);
+              return [p.id, { color, sheet: SP.makeKartSheet(color, band), tag, active: true, lap: 0, progress: 0, shown: { x: 0, y: 0, h: 0 }, buf: [] }];
+            }));
             running = true;
             raceEndsAt = Date.now() + m.timeMs;
             status.textContent = 'GO!';
@@ -379,6 +404,7 @@
         if (disposed) return;
         T = window.ClubDojoKartTrack;
         M7 = window.ClubDojoMode7;
+        SP = window.ClubDojoKartSprites;
         ready = true;
         fitView();
         // Older snapshots are stale by now; keep only the newest one.
