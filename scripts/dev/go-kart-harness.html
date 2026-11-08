@@ -2,7 +2,8 @@
 <!-- Dev only: runs the Go-Kart Race server rules in the browser and mounts the real client, so the
      Mode 7 view can be checked without a server, login or pavilion. Bots fill the other slots.
      Open with: node scripts/dev-web.js, then http://localhost:5173/scripts/dev/go-kart-harness.html
-     Options: ?bots=0..3 (default 3) -->
+     Options: ?bots=0..3 (default 3). These harness bots are players; with fewer than 3 the server's own
+     CPU racers fill the rest of the grid, so ?bots=0 shows a solo race against CPUs. -->
 <html>
 <head>
   <meta charset="utf-8">
