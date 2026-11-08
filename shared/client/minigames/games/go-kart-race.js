@@ -17,7 +17,10 @@
         s.onerror = () => reject(new Error(`Missing ${file}. Update ClubDojo.`));
         document.head.append(s);
       }));
-      helpers = Promise.all([one('track.js', 'ClubDojoKartTrack'), one('mode7.js', 'ClubDojoMode7'), one('sprites.js', 'ClubDojoKartSprites')])
+      helpers = Promise.all([
+        one('track.js', 'ClubDojoKartTrack'), one('mode7.js', 'ClubDojoMode7'),
+        one('sprites.js', 'ClubDojoKartSprites'), one('scenery.js', 'ClubDojoKartScenery'),
+      ])
         .catch((e) => { helpers = null; throw e; });
     }
     return helpers;
@@ -28,8 +31,19 @@
   const VIEW_H = 240;
   const TEX_SCALE = 2;            // texels per world unit in the track image
   const TEX_PAD = 100;            // world units of grass around the world in the track image
-  const CAM = { behind: 72, height: 26, focal: 230, horizon: 84 };
-  const COLORS = { grass: '#3f8a3a', grass2: '#367d33', verge: '#7a9a3c', road: '#5b5f68', kerbA: '#e8453c', kerbB: '#f3efe2', wall: '#b9b1a0', sky1: '#5aa7e6', sky2: '#bfe3f7' };
+  // Chase camera. At standstill it sits `behind` units back and `height` up; at top speed it pulls
+  // back, rises a little and widens the view (lower focal), which reads as speed.
+  const CAM = {
+    behind: 62, behindFast: 82, height: 24, heightFast: 28, focal: 236, focalFast: 204, horizon: 84,
+    turnFollow: 9,   // how fast the camera swings round behind the kart (per second, exponential)
+    speedFollow: 3,  // how fast the speed effects catch up
+    refSpeed: 330,   // the server's default top speed on the road
+    shake: 0.9,      // off-road rumble in screen pixels at full speed
+  };
+  const COLORS = { grass: '#3f8a3a', grass2: '#367d33', verge: '#7a9a3c', road: '#5b5f68', kerbA: '#e8453c', kerbB: '#f3efe2', wall: '#b9b1a0', sky1: '#4a98dc', sky2: '#bfe3f7' };
+  const PROP_FAR_Z = 1300; // props further than this are skipped (tiny, and under the haze)
+  const ordinal = (n) => `${n}${n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th'}`;
+  const clock = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 
   // Snapshots arrive at 20 Hz. Rendering about 100 ms behind the newest one gives a sample on
   // each side of the frame time almost every time, so motion stays smooth.
@@ -53,30 +67,75 @@
         .gk-p { display: flex; flex-direction: column; align-items: center; background: rgba(255,255,255,.08); border-radius: 10px; padding: 4px 8px; min-width: 80px; transition: opacity .3s; }
         .gk-p.out { opacity: .45; }
         .gk-p b { font-size: 12px; } .gk-p small { opacity: .85; }
-        .gk-hud { display: flex; gap: 18px; font-family: var(--display); font-size: 20px; letter-spacing: .04em; justify-content: center; }
-        .gk-status { font-family: var(--display); font-size: 26px; min-height: 32px; text-align: center; }
         .gk-stage { position: relative; width: min(900px, 100%); flex: 1 1 auto; min-height: 0; display: flex; justify-content: center; align-items: center; }
-        .gk-view { position: relative; width: 100%; aspect-ratio: ${VIEW_W} / ${VIEW_H}; }
+        .gk-view { position: relative; width: 100%; aspect-ratio: ${VIEW_W} / ${VIEW_H}; container-type: inline-size; }
+        /* HUD over the view. Sizes are in cqw (percent of the view's width) so it scales with it. */
+        .gk-hud { position: absolute; inset: 0; pointer-events: none; font-family: var(--display); color: #fff; letter-spacing: .03em;
+          text-shadow: 0 .25cqw 0 rgba(0,0,0,.55), 0 0 .6cqw rgba(0,0,0,.45); }
+        .gk-place { position: absolute; left: 2.5%; top: 3%; line-height: .9; }
+        .gk-place b { font-size: 9cqw; color: var(--pc, #fff); }
+        .gk-place small { font-size: 3.4cqw; opacity: .9; margin-left: .4cqw; }
+        .gk-lap { position: absolute; left: 2.8%; top: 19%; font-size: 3.4cqw; }
+        .gk-lap.final { color: #f5b82e; }
+        .gk-time { position: absolute; left: 50%; top: 3%; transform: translateX(-50%); font-size: 3.6cqw; background: rgba(0,0,0,.3); border-radius: 1cqw; padding: .2cqw 1.4cqw; }
+        .gk-time.low { color: #ff8a80; }
+        .gk-speed { position: absolute; left: 2.5%; bottom: 4%; display: flex; align-items: flex-end; gap: 1cqw; }
+        .gk-speed b { font-size: 5cqw; line-height: .9; min-width: 7cqw; text-align: right; }
+        .gk-speed small { font-size: 2.2cqw; opacity: .85; }
+        .gk-bars { display: flex; gap: .35cqw; align-items: flex-end; height: 4.4cqw; margin-left: .6cqw; }
+        .gk-bars i { display: block; width: .9cqw; background: rgba(255,255,255,.22); border-radius: .2cqw; box-shadow: 0 .2cqw 0 rgba(0,0,0,.35); }
+        .gk-bars i.on { background: #7be07b; } .gk-bars i.on.hot { background: #f5b82e; } .gk-bars i.on.max { background: #ff6b5e; }
+        .gk-banner { position: absolute; left: 0; right: 0; top: 30%; text-align: center; font-size: 8cqw; transition: opacity .25s, transform .25s; }
+        .gk-banner.hide { opacity: 0; transform: scale(.85); }
+        .gk-banner.warn { color: #ffd23f; font-size: 6.5cqw; animation: gk-blink .5s steps(2) infinite; }
+        .gk-banner small { display: block; font-size: 3.2cqw; margin-top: .6cqw; }
+        @keyframes gk-blink { 50% { opacity: .25; } }
         .gk-canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; border-radius: 12px; box-shadow: 0 6px 0 rgba(0,0,0,.35); background: ${COLORS.grass}; }
-        .gk-tags { position: absolute; inset: 0; pointer-events: none; overflow: hidden; border-radius: 12px; }
+        .gk-tags { position: absolute; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; border-radius: 12px; }
+        .gk-hud, .gk-map { z-index: 2; }
         .gk-tag { position: absolute; transform: translate(-50%, -100%); white-space: nowrap; font: 600 clamp(9px, 1.2vw + 5px, 12px) system-ui, sans-serif; color: #fff; background: rgba(0,0,0,.55); border-radius: 6px; padding: 1px 6px; border-bottom: 2px solid var(--kc, #fff); }
         .gk-map { position: absolute; right: 2%; top: 3%; width: 24%; aspect-ratio: 1000 / 640; opacity: .9; border-radius: 6px; background: rgba(0,0,0,.25); }
         .gk-help { font-size: 12px; opacity: .75; text-align: center; }
       `);
 
-      const status = h('div', { class: 'gk-status' }, 'Get ready...');
-      const hud = h('div', { class: 'gk-hud' });
+      // HUD: place, lap, timer and speed, plus a centre banner for GO!, laps, wrong way and the finish.
+      const SPEED_BARS = 12;
+      const hudPlace = h('div', { class: 'gk-place' });
+      const hudLap = h('div', { class: 'gk-lap' });
+      const hudTime = h('div', { class: 'gk-time' });
+      const speedNum = h('b', {}, '0');
+      const bars = h('div', { class: 'gk-bars' });
+      for (let i = 0; i < SPEED_BARS; i++) {
+        const bar = h('i', { style: `height: ${30 + (70 * i) / (SPEED_BARS - 1)}%` });
+        if (i >= SPEED_BARS - 4) bar.classList.add(i >= SPEED_BARS - 2 ? 'max' : 'hot');
+        bars.append(bar);
+      }
+      const hudSpeed = h('div', { class: 'gk-speed' }, speedNum, h('small', {}, 'km/h'), bars);
+      const status = h('div', { class: 'gk-banner' }, 'Get ready...');
+      const hud = h('div', { class: 'gk-hud' }, hudPlace, hudLap, hudTime, hudSpeed, status);
+      hudSpeed.hidden = true;
+      // The banner shows one message at a time; a timed one hides itself unless replaced.
+      let bannerTimer = null;
+      let bannerKind = '';
+      function banner(html, { ms = 0, kind = '' } = {}) {
+        if (bannerTimer) { clearTimeout(bannerTimer); timers.delete(bannerTimer); bannerTimer = null; }
+        bannerKind = html ? kind : '';
+        if (!html) { status.classList.add('hide'); return; }
+        status.innerHTML = html;
+        status.className = `gk-banner${kind === 'warn' ? ' warn' : ''}`;
+        if (ms) bannerTimer = later(ms, () => { bannerTimer = null; bannerKind = ''; status.classList.add('hide'); });
+      }
       const canvas = h('canvas', { class: 'gk-canvas', width: VIEW_W, height: VIEW_H });
       const g = canvas.getContext('2d');
       const mapCanvas = h('canvas', { class: 'gk-map', width: 250, height: 160 });
       const mg = mapCanvas.getContext('2d');
       // Name tags are DOM, not canvas, so they stay sharp over the scaled-up pixel view.
       const tagLayer = h('div', { class: 'gk-tags' });
-      const view = h('div', { class: 'gk-view' }, canvas, tagLayer, mapCanvas);
+      const view = h('div', { class: 'gk-view' }, canvas, tagLayer, mapCanvas, hud);
       const stage = h('div', { class: 'gk-stage' }, view);
       const playersRow = h('div', { class: 'gk-players' });
       const help = h('div', { class: 'gk-help' }, 'Drive: Arrow keys or WASD. Up / W gas, Down / S brake, Left and Right to steer.');
-      el.append(style, h('div', { class: 'gk' }, playersRow, hud, status, stage, help));
+      el.append(style, h('div', { class: 'gk' }, playersRow, stage, help));
 
       // Keep the 5:3 view inside the stage at any window shape (CSS alone can't fit both axes).
       function fitView() {
@@ -99,6 +158,10 @@
       let T = null;          // ClubDojoKartTrack, once loaded
       let M7 = null;         // ClubDojoMode7, once loaded
       let SP = null;         // ClubDojoKartSprites, once loaded
+      let SC = null;         // ClubDojoKartScenery, once loaded
+      let sky = null;        // 360° panorama strip
+      let props = [];        // trackside billboards: { x, y, sheet, size }
+      let gate = null;       // start gantry: { a, b, low, high, banner }
       let ready = false;
       const pending = [];    // messages that arrived before the helpers loaded
       let laps = 3;
@@ -112,7 +175,10 @@
       let running = false;
       let finishedMe = false;
       let frame = 0;
-      const camShown = { x: 0, y: 0, h: 0, inited: false };
+      let lastFrameAt = 0;
+      const camShown = { h: 0, speed: 0, inited: false };
+      let myLap = 0;         // last lap seen for you, to announce the next one
+      let wrongWayChecks = 0;
 
       // Keyboard state
       const keys = { up: false, down: false, left: false, right: false };
@@ -160,6 +226,15 @@
           // Mowing stripes so speed and turning read well in perspective.
           c2.fillStyle = COLORS.grass2;
           for (let x = 20 - pad; x < WORLD.w + pad; x += 40) c2.fillRect(x, -pad, 20, WORLD.h + pad * 2);
+          // Darker and lighter tufts, and a few flowers, so the grass is not flat colour up close.
+          const rand = SC.rng(3);
+          for (let i = 0; i < 2600; i++) {
+            const x = -pad + rand() * (WORLD.w + pad * 2), y = -pad + rand() * (WORLD.h + pad * 2);
+            const r = rand();
+            c2.fillStyle = r < 0.45 ? 'rgba(20,60,20,.28)' : r < 0.9 ? 'rgba(160,210,110,.22)' : (r < 0.95 ? '#f3efe2' : '#f5b82e');
+            const s = r < 0.9 ? 2 + rand() * 3 : 1.2;
+            c2.fillRect(x, y, s, s * 0.7);
+          }
         }
         const path = () => {
           c2.beginPath();
@@ -211,7 +286,8 @@
         paintTrack(bg, TEX_SCALE, true, pad);
         const img = bg.getImageData(0, 0, big.width, big.height);
         tex = { data: new Uint32Array(img.data.buffer), w: big.width, h: big.height, scale: TEX_SCALE, ox: -pad, oy: -pad };
-        grassPx = tex.data[0]; // top-left corner is plain grass
+        const gc = parseInt(COLORS.grass.slice(1), 16);
+        grassPx = M7.rgba(gc >> 16, (gc >> 8) & 255, gc & 255); // ground beyond the image
 
         mapLayer = document.createElement('canvas');
         mapLayer.width = mapCanvas.width; mapLayer.height = mapCanvas.height;
@@ -219,13 +295,20 @@
 
         floor = g.createImageData(VIEW_W, VIEW_H);
         floor32 = new Uint32Array(floor.data.buffer);
+
+        // Scenery: the same seeded layout on every client.
+        sky = SC.makeSkyStrip(CAM.focal, CAM.horizon + 4, COLORS);
+        const sheets = SC.makePropSheets();
+        props = SC.placeProps(T, { pad: pad - 20 }).map((p) => ({ x: p.x, y: p.y, sheet: sheets[p.kind], size: p.size }));
+        gate = { ...SC.gantry(T), banner: SC.makeBanner('CLUB DOJO GP') };
       }
 
       // Every kart (yours included) as a billboard from its sprite sheet, drawn back to front.
       // The frame depends on the kart's heading relative to the line from the camera to it.
       const NEAR_Z = 8;      // closer than this the kart is behind or inside the camera
       const TAG_MAX_Z = 700; // name tags fade out by this distance
-      function drawKarts(cam) {
+      // Karts, props and the start gantry share one back-to-front list, so a tree can hide a kart.
+      function drawWorld(cam) {
         const list = [];
         for (const [id, k] of karts) {
           if (!k.active || !k.inited || !k.sheet) continue;
@@ -233,9 +316,22 @@
           if (!pt || pt.z < NEAR_Z) continue;
           list.push({ id, k, pt });
         }
+        for (const p of props) {
+          const pt = M7.project(cam, p.x, p.y);
+          if (!pt || pt.z < NEAR_Z || pt.z > PROP_FAR_Z) continue;
+          list.push({ prop: p, pt });
+        }
+        if (gate) {
+          const pa = M7.project(cam, gate.a.x, gate.a.y);
+          const pb = M7.project(cam, gate.b.x, gate.b.y);
+          if (pa && pb && pa.z > NEAR_Z && pb.z > NEAR_Z) list.push({ gate: true, pt: { z: (pa.z + pb.z) / 2 } });
+        }
         list.sort((a, b) => b.pt.z - a.pt.z);
         const seen = new Set();
-        for (const { id, k, pt } of list) {
+        for (const item of list) {
+          if (item.prop) { drawProp(item.prop, item.pt); continue; }
+          if (item.gate) { drawGantry(cam); continue; }
+          const { id, k, pt } = item;
           const s = k.sheet;
           const toKart = Math.atan2(k.shown.y - cam.y, k.shown.x - cam.x);
           const frame = SP.frameFor(wrapAngle(k.shown.h - toKart));
@@ -257,12 +353,53 @@
         for (const [id, k] of karts) if (k.tag && !seen.has(id)) k.tag.hidden = true;
       }
 
-      function drawSky() {
-        const grad = g.createLinearGradient(0, 0, 0, CAM.horizon);
-        grad.addColorStop(0, COLORS.sky1);
-        grad.addColorStop(1, COLORS.sky2);
-        g.fillStyle = grad;
-        g.fillRect(0, 0, VIEW_W, Math.ceil(CAM.horizon));
+      function drawProp(p, pt) {
+        const s = p.sheet;
+        const px = (pt.scale / s.ppu) * p.size;
+        const w = s.fw * px, hgt = s.fh * px;
+        const x = pt.x - s.ax * px, y = pt.y - s.ay * px;
+        if (x > VIEW_W || x + w < 0 || y > VIEW_H || y + hgt < 0 || w < 0.6) return;
+        g.drawImage(s.canvas, x, y, w, hgt);
+      }
+
+      // Two posts and a banner across the road. The banner is drawn in thin vertical slices, each
+      // projected on its own, so it keeps the right perspective when seen at an angle.
+      function drawGantry(cam) {
+        const at = (t, up) => {
+          const pt = M7.project(cam, gate.a.x + (gate.b.x - gate.a.x) * t, gate.a.y + (gate.b.y - gate.a.y) * t);
+          return pt && { x: pt.x, y: pt.y - up * pt.scale, scale: pt.scale };
+        };
+        for (const t of [0, 1]) {
+          const base = at(t, 0), top = at(t, gate.high);
+          if (!base || !top) continue;
+          const w = Math.max(1, 2.2 * base.scale);
+          g.fillStyle = '#c9ced6'; g.fillRect(base.x - w / 2, top.y, w, base.y - top.y);
+          g.fillStyle = 'rgba(0,0,0,.25)'; g.fillRect(base.x, top.y, w / 2, base.y - top.y);
+        }
+        const SLICES = 16;
+        const bw = gate.banner.width / SLICES, bh = gate.banner.height;
+        for (let i = 0; i < SLICES; i++) {
+          const t0 = i / SLICES, t1 = (i + 1) / SLICES;
+          const a = at(t0, gate.high), b = at(t1, gate.high), c = at((t0 + t1) / 2, gate.low);
+          if (!a || !b || !c) continue;
+          const top = (a.y + b.y) / 2;
+          const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
+          // Seen from behind the banner the slices run right to left, so flip them back.
+          const src = a.x <= b.x ? i : SLICES - 1 - i;
+          g.drawImage(gate.banner, src * bw, 0, bw, bh, x0, top, x1 - x0 + 0.6, c.y - top);
+        }
+      }
+
+      // Panorama behind the horizon, then a haze band just below it so distant ground (where the
+      // floor texture shimmers most) fades into the hills.
+      function drawSky(cam) {
+        SC.drawSky(g, sky, cam.h, VIEW_W, cam.horizon, cam.focal / CAM.focal);
+        const top = Math.ceil(cam.horizon);
+        const haze = g.createLinearGradient(0, top, 0, top + 26);
+        haze.addColorStop(0, 'rgba(191,227,247,.7)');
+        haze.addColorStop(1, 'rgba(191,227,247,0)');
+        g.fillStyle = haze;
+        g.fillRect(0, top, VIEW_W, 26);
       }
 
       function drawMinimap() {
@@ -304,36 +441,95 @@
         for (const k of karts.values()) interpolate(k, renderAt);
         const me = karts.get(ctx.youId) || [...karts.values()][0];
         if (!me || !me.inited) return;
-        // Chase camera: sits behind the kart and turns a little later than it, so steering is visible.
-        if (!camShown.inited) { Object.assign(camShown, me.shown); camShown.inited = true; }
-        camShown.h += wrapAngle(me.shown.h - camShown.h) * 0.18;
-        camShown.x = me.shown.x;
-        camShown.y = me.shown.y;
+        const now = performance.now();
+        const dt = lastFrameAt ? Math.min(0.1, (now - lastFrameAt) / 1000) : 0;
+        lastFrameAt = now;
+        // Chase camera: sits behind the kart and swings round a little later than it, so steering
+        // shows. Smoothing uses elapsed time, so it feels the same at 30, 60 or 144 frames a second.
+        const speed = Math.min(1, Math.abs(me.v || 0) / CAM.refSpeed);
+        if (!camShown.inited) { camShown.h = me.shown.h; camShown.speed = speed; camShown.inited = true; }
+        camShown.h += wrapAngle(me.shown.h - camShown.h) * (1 - Math.exp(-CAM.turnFollow * dt));
+        camShown.speed += (speed - camShown.speed) * (1 - Math.exp(-CAM.speedFollow * dt));
+        const sp = camShown.speed;
+        const behind = CAM.behind + (CAM.behindFast - CAM.behind) * sp;
+        // Off the road the view rumbles a little, more the faster you go.
+        const shake = me.o && !me.f ? Math.sin(now / 18) * CAM.shake * sp : 0;
         const cam = M7.camera({
-          x: camShown.x - Math.cos(camShown.h) * CAM.behind,
-          y: camShown.y - Math.sin(camShown.h) * CAM.behind,
-          h: camShown.h, height: CAM.height, focal: CAM.focal, horizon: CAM.horizon, width: VIEW_W, rows: VIEW_H,
+          x: me.shown.x - Math.cos(camShown.h) * behind,
+          y: me.shown.y - Math.sin(camShown.h) * behind,
+          h: camShown.h,
+          height: CAM.height + (CAM.heightFast - CAM.height) * sp,
+          focal: CAM.focal + (CAM.focalFast - CAM.focal) * sp,
+          horizon: CAM.horizon + shake,
+          width: VIEW_W, rows: VIEW_H,
         });
         M7.renderFloor(cam, floor32, tex, grassPx);
-        const top = Math.max(0, Math.floor(CAM.horizon));
+        const top = Math.max(0, Math.floor(cam.horizon));
         g.putImageData(floor, 0, 0, 0, top, VIEW_W, VIEW_H - top);
-        drawSky();
+        drawSky(cam);
 
-        drawKarts(cam);
+        drawWorld(cam);
         drawMinimap();
+        updateSpeed(me);
+      }
+
+      let shownSpeed = -1;
+      let shownBars = -1;
+      function updateSpeed(me) {
+        const kmh = Math.round(Math.abs(me.v || 0) * 0.36); // about 120 at the road's top speed
+        if (kmh !== shownSpeed) { shownSpeed = kmh; speedNum.textContent = String(kmh); }
+        const lit = Math.round(Math.min(1, Math.abs(me.v || 0) / CAM.refSpeed) * SPEED_BARS);
+        if (lit !== shownBars) {
+          shownBars = lit;
+          [...bars.children].forEach((b, i) => b.classList.toggle('on', i < lit));
+        }
+      }
+
+      // Direction of the track at distance s along the centreline.
+      function trackDirAt(s) {
+        const { TRACK } = T;
+        let i = 0;
+        while (i < TRACK.seg.length - 1 && TRACK.cum[i + 1] <= s) i++;
+        const sg = TRACK.seg[i];
+        return { x: sg.dx / sg.len, y: sg.dy / sg.len };
       }
 
       function updateHud() {
-        const left = Math.max(0, Math.ceil((raceEndsAt - Date.now()) / 1000));
         const me = karts.get(ctx.youId);
+        const left = Math.max(0, Math.ceil((raceEndsAt - Date.now()) / 1000));
+        hudTime.textContent = running ? clock(left) : '';
+        hudTime.classList.toggle('low', running && left <= 15);
+        if (!me) return;
         const ordered = [...karts.values()].filter((k) => k.active).sort((a, b) => b.progress - a.progress);
-        const pos = me ? ordered.indexOf(me) + 1 : 0;
-        hud.textContent = '';
-        hud.append(
-          h('span', {}, me ? `Lap ${Math.min(me.lap + 1, laps)}/${laps}` : ''),
-          h('span', {}, pos ? `Place ${pos}/${ordered.length}` : ''),
-          h('span', {}, running ? `${left}s` : ''),
-        );
+        const pos = ordered.indexOf(me) + 1;
+        hudPlace.textContent = '';
+        if (pos) {
+          hudPlace.style.setProperty('--pc', pos === 1 ? '#f5b82e' : '#fff');
+          hudPlace.append(h('b', {}, ordinal(pos)), h('small', {}, `/ ${ordered.length}`));
+        }
+        const lap = Math.min(me.lap + 1, laps);
+        hudLap.textContent = me.f ? 'FINISHED' : `LAP ${lap}/${laps}`;
+        hudLap.classList.toggle('final', !me.f && lap === laps && laps > 1);
+
+        // Wrong way: facing against the track for half a second while moving.
+        // Uses the newest snapshot, not the drawn position, so it works even when frames stall.
+        const at = me.buf[me.buf.length - 1];
+        if (running && !me.f && at && Math.abs(me.v || 0) > 30) {
+          const dir = trackDirAt(T.nearest(at.x, at.y).s);
+          const dot = Math.cos(at.h) * dir.x + Math.sin(at.h) * dir.y;
+          wrongWayChecks = dot < -0.25 ? wrongWayChecks + 1 : 0;
+        } else wrongWayChecks = 0;
+        if (wrongWayChecks >= 2 && bannerKind !== 'warn') banner('WRONG WAY', { kind: 'warn' });
+        else if (wrongWayChecks < 2 && bannerKind === 'warn') banner('');
+      }
+
+      // Announces each new lap for you: "LAP 2", then "FINAL LAP!".
+      function checkLap(me) {
+        if (!running || me.f || me.lap <= myLap) return;
+        myLap = me.lap;
+        if (myLap >= laps) return;
+        const final = myLap + 1 === laps;
+        if (bannerKind !== 'warn') banner(final ? 'FINAL LAP!' : `LAP ${myLap + 1}`, { ms: 1800 });
       }
 
       const hudTimer = setInterval(() => { if (running) updateHud(); }, 250);
@@ -352,6 +548,7 @@
           k.f = s.f;
           k.o = s.o;
           k.active = !!s.active;
+          if (s.id === ctx.youId) checkLap(k);
           const c = cards.get(s.id);
           if (c) {
             c.card.classList.toggle('out', !k.active);
@@ -376,8 +573,9 @@
             }));
             running = true;
             raceEndsAt = Date.now() + m.timeMs;
-            status.textContent = 'GO!';
-            later(1200, () => { if (running) status.textContent = ''; });
+            myLap = 0;
+            hudSpeed.hidden = false;
+            banner('GO!', { ms: 1200 });
             updateHud();
             break;
           }
@@ -388,8 +586,9 @@
           case 'finish':
             if (m.id === ctx.youId) {
               finishedMe = true;
-              status.textContent = `Finished! Place ${m.place}`;
+              banner(`FINISH!<small>${ordinal(Number(m.place) || 0)} place</small>`);
               sendControls();
+              updateHud();
             } else {
               const c = cards.get(m.id);
               if (c) c.place.textContent = `Finished #${m.place}`;
@@ -405,6 +604,7 @@
         T = window.ClubDojoKartTrack;
         M7 = window.ClubDojoMode7;
         SP = window.ClubDojoKartSprites;
+        SC = window.ClubDojoKartScenery;
         ready = true;
         fitView();
         // Older snapshots are stale by now; keep only the newest one.

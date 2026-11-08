@@ -43,7 +43,7 @@ Decision: keep the server authoritative and replace only the client renderer wit
 2. ✅ **Mode 7 floor:** render the track ground for the local player only, with no other karts. Verify in the browser at a phone width and a desktop width. Done: `go-kart-mode7/mode7.js` and a 400×240 pixelated view with a minimap (other karts show as dots there). Tests: `npm run check:mode7`. Dev harness: `scripts/dev/go-kart-harness.html` (server rules in the browser, plus bots).
 3. ✅ **Sprites:** draw remote karts as placeholder billboards with depth sort and names. Done: `go-kart-mode7/sprites.js` draws an 8-angle placeholder sheet per kart (player colour, headband from the loadout). Every kart, yours included, is drawn back to front. Name tags are a DOM layer, so they stay sharp, and fade out with distance.
 4. ✅ **Snapshot smoothing:** interpolate remote kart positions between server snapshots. Done: fixed 60 Hz physics, 20 Hz snapshots, client renders 100 ms behind.
-5. **Polish:** sky, HUD, chase camera tuning, placeholder track art.
+5. ✅ **Polish:** sky, HUD, chase camera tuning, placeholder track art. Done: `go-kart-mode7/scenery.js` adds a seamless 360° sky panorama (sun, clouds, mountains, hills, tree line) that turns with the camera, a haze band at the horizon, seeded trackside props (trees, pines, bushes, tyre stacks on the outside of bends) and a start gantry, all depth-sorted with the karts. The grass has tufts and flowers. The HUD sits over the view and scales with it: place, lap (gold on the final lap), a timer that turns red in the last 15 s, a speedometer, and a centre banner for GO!, LAP 2, FINAL LAP!, WRONG WAY and FINISH!. The chase camera uses time-based smoothing (the same at any frame rate), pulls back, rises and widens the view with speed, and rumbles off the road. Checks: `npm run check:mode7` covers prop placement and the gantry.
 6. **Stretch:** a second track, real sprites, pickups.
 
 ## 7. Testing
@@ -55,3 +55,4 @@ Decision: keep the server authoritative and replace only the client renderer wit
 - Snapshot rate: the current server tick may be too slow for smooth Mode 7 motion. Decide after milestone 2.
 - Whether the existing 4-player limit stays (the outline assumes it does).
 - Whether the top-down view is kept as a toggle for debugging.
+- Wall contact (server): a kart pressed into the wall with the gas held is pinned at about 5 speed, and turns very slowly because steering grip scales with speed. Seen while testing milestone 5. Not changed yet, since it is server physics.

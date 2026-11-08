@@ -79,7 +79,7 @@
       send: (data) => server.input(1, data),
     });
     server.start();
-    window.__kart = { server, players, get state() { return lastState; } };
+    window.__kart = { server, client, players, get state() { return lastState; } };
 
     // Bots aim at a point a little further along the centreline.
     const T = window.ClubDojoKartTrack;
