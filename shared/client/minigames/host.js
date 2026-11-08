@@ -98,6 +98,8 @@
       if (!lobby || mountedKey !== lobby.key || lobby.phase !== 'playing') return;
       stage.replaceChildren();
       await Avatar.preload(lobby.players.map((p) => p.loadout));
+      // The round may have ended, or the lobby closed, while the avatars were loading.
+      if (!lobby || mountedKey !== lobby.key || lobby.phase !== 'playing') return;
       const ctx = {
         el: stage,
         youId: youId(),

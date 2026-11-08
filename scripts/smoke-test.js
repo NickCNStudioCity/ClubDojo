@@ -312,6 +312,25 @@ const expectError = async (p, code) => {
     await admin.req('admin:publishRoom', { ...base, minigames: [{ id: 'mg1', game: 'dojo-memory', x: 8, y: 15 }] });
   });
 
+  await check('moving a pavilion closes its lobby', async () => {
+    const plaza = (await admin.req('admin:rooms')).rooms.find((r) => r.id === 'plaza');
+    const base = { roomId: 'plaza', tiles: plaza.tiles, spawn: plaza.spawn };
+    await ren.req('move', { x: 9, y: 17 });
+    await ren.req('mg:join', { spotId: 'mg1' });
+    await admin.req('admin:publishRoom', { ...base, minigames: [{ id: 'mg1', game: 'dojo-memory', x: 22, y: 19 }] });
+    await ren.waitFor((m) => m.t === 'mg:closed' && /changed/.test(m.reason || ''), 2000, 'lobby closed after the move');
+    await admin.req('admin:publishRoom', { ...base, minigames: [{ id: 'mg1', game: 'dojo-memory', x: 8, y: 15 }] });
+  });
+
+  await check('leaving a minigame gets through the flood guard', async () => {
+    await ren.req('move', { x: 9, y: 17 });
+    await ren.req('mg:join', { spotId: 'mg1' });
+    for (let i = 0; i < 60; i++) ren.ws.send(JSON.stringify({ t: 'mg:input', data: { type: 'tap', scroll: 0 } }));
+    await ren.req('mg:leave');
+    await new Promise((r) => setTimeout(r, 1100)); // let the flood guard reset; other messages are dropped until then
+    await ren.req('move', { x: 10, y: 17 }); // would fail with 'busy' if still in the lobby
+  });
+
   ren.close(); aya.close();
 
   await check('admin kicks a ninja; others see them leave', async () => {

@@ -192,7 +192,13 @@
         if (state.pendingSpot) { const id = state.pendingSpot; state.pendingSpot = null; minigames.join(id); }
         return;
       }
-      conn.request('move', target).catch((e) => { state.pendingPortal = false; state.pendingSpot = null; world.showMarker(target, false); if (e.code === 'busy') toast(e.message, true); });
+      const failed = (e) => { state.pendingPortal = false; state.pendingSpot = null; world.showMarker(target, false); if (e.code === 'busy') toast(e.message, true); };
+      conn.request('move', target).catch((e) => {
+        // The server still has us in a minigame this window already closed (for example a lost
+        // leave message): leave it properly, then walk.
+        if (e.code === 'busy' && !minigames.isOpen()) return conn.request('mg:leave').then(() => conn.request('move', target)).catch(failed);
+        failed(e);
+      });
     }
     function nearestDoor(t) {
       const building = (state.room.props || []).find((p) => (p.type === 'building') && t.x >= p.x && t.x < p.x + p.w && t.y >= p.y && t.y < p.y + p.h);

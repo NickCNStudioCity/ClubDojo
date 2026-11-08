@@ -3,6 +3,7 @@
 //   - a client file exists at shared/client/minigames/games/<id>.js and registers the same id
 //   - a match with idle players (and one with random inputs) ends on its own and reports
 //     a score for every player, using simulated time so even long rounds finish instantly
+//   - a match where one ninja leaves mid-round still ends cleanly for the others
 // Run: npm run check:minigames
 const fs = require('fs');
 const path = require('path');
@@ -28,16 +29,17 @@ function checkClient(id) {
 }
 
 // Runs one match on a virtual clock. inputFn(ctx, instance, players, lastMsg) may send inputs.
-function simulate(game, playerCount, inputFn) {
+function simulate(game, playerCount, inputFn, leaveAtMs = null) {
   let now = 0, seq = 0, ended = null, endCalls = 0;
   const timers = new Map();
-  const players = Array.from({ length: playerCount }, (_, i) => ({
+  const all = Array.from({ length: playerCount }, (_, i) => ({
     id: i + 1, name: `Bot ${i + 1}`,
     loadout: { v: 1, id: i + 1, name: `Bot ${i + 1}`, color: '#20262e', headband: '#e8453c', belt: 'white', accessories: {} },
   }));
+  const players = all.slice(); // ninjas still in the lobby
   const messages = [];
   const ctx = {
-    game: game.id, settings: { ...game.defaults }, players,
+    game: game.id, settings: { ...game.defaults }, players: all,
     isPlaying: (id) => players.some((p) => p.id === id),
     send: (id, data) => messages.push({ to: id, data }),
     broadcast: (data) => messages.push({ to: '*', data }),
@@ -65,6 +67,10 @@ function simulate(game, playerCount, inputFn) {
       if (t.every) t.at += t.every; else timers.delete(h);
       t.fn();
     }
+    if (leaveAtMs !== null && now >= leaveAtMs && players.length === all.length) {
+      const gone = players.pop(); // the engine removes the ninja first, then calls leave()
+      if (instance.leave) instance.leave(gone.id);
+    }
     if (inputFn && messages.length) inputFn(instance, players, messages.splice(0));
   }
   if (instance.dispose) instance.dispose();
@@ -72,16 +78,19 @@ function simulate(game, playerCount, inputFn) {
 }
 
 function checkServer(game) {
-  for (const [label, count, inputFn] of [
+  const randomInputs = (inst, players) => {
+    if (!inst.input) return;
+    for (const p of players) inst.input(p.id, { type: 'tap', scroll: Math.floor(Math.random() * 8), x: Math.random(), y: Math.random(), action: 'random' });
+  };
+  const runs = [
     ['idle players', game.minPlayers, null],
     ['idle full lobby', game.maxPlayers, null],
-    ['random inputs', game.maxPlayers, (inst, players) => {
-      if (!inst.input) return;
-      for (const p of players) inst.input(p.id, { type: 'tap', scroll: Math.floor(Math.random() * 8), x: Math.random(), y: Math.random(), action: 'random' });
-    }],
-  ]) {
+    ['random inputs', game.maxPlayers, randomInputs],
+  ];
+  if (game.maxPlayers > 1) runs.push(['one ninja leaves mid-round', game.maxPlayers, randomInputs, 2000]);
+  for (const [label, count, inputFn, leaveAtMs] of runs) {
     let r;
-    try { r = simulate(game, count, inputFn); } catch (e) { bad(`${game.id} (${label}): threw ${e.stack.split('\n').slice(0, 2).join(' ')}`); continue; }
+    try { r = simulate(game, count, inputFn, leaveAtMs ?? null); } catch (e) { bad(`${game.id} (${label}): threw ${e.stack.split('\n').slice(0, 2).join(' ')}`); continue; }
     if (!r.ended) { bad(`${game.id} (${label}): never called ctx.end within ${MAX_VIRTUAL_MS / 60000} virtual minutes`); continue; }
     if (r.endCalls > 1) bad(`${game.id} (${label}): called ctx.end ${r.endCalls} times (engine keeps the first)`);
     const ids = new Set(r.ended.map((x) => x.id));
