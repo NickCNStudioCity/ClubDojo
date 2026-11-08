@@ -119,6 +119,12 @@ function open(dataDir) {
       return q(`SELECT n.name, MAX(s.score) AS score, COUNT(*) AS plays FROM minigame_scores s JOIN ninjas n ON n.account_id = s.account_id
                 WHERE s.game_id = ? GROUP BY s.account_id ORDER BY score DESC LIMIT ?`).all(gameId, limit || 10);
     },
+    // The Cafe's Hall of Fame: most wins across the card games.
+    topCardPlayers(games, limit) {
+      const marks = games.map(() => '?').join(',');
+      return q(`SELECT n.name, SUM(s.place = 1 AND s.score > 0) AS wins, COUNT(*) AS plays FROM minigame_scores s JOIN ninjas n ON n.account_id = s.account_id
+                WHERE s.game_id IN (${marks}) GROUP BY s.account_id ORDER BY wins DESC, plays ASC LIMIT ?`).all(...games, limit || 8);
+    },
     // Totals the belt tests read: rounds played, different games played, and first places
     // with a score above zero.
     progressRecord(accountId) {

@@ -14,11 +14,14 @@ const minigameRegistry = require('./minigames/registry');
 const { createEngine } = require('./minigames/engine');
 const progress = require('./progress');
 const mountain = require('./mountain');
+const cards = require('./cards');
+const Data = require('../../shared/cards/data');
 const updater = require('../../shared/updater');
 
 const JOIN_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const IDLE_KICK_MS = 30 * 60 * 1000;
 const MOUNTAIN_ROOMS = new Set(['mountain-town', 'mountain-peak']);
+const WARM_ROOMS = new Set([...MOUNTAIN_ROOMS, 'cafe']); // rooms where sitting somewhere warm pays
 
 function randomCode(len, alphabet) {
   const bytes = crypto.randomBytes(len);
@@ -105,10 +108,55 @@ function start(options = {}) {
     onRewarded: (accountId, info) => {
       const s = onlineSession(accountId);
       if (s && info) trackEvent(s, { type: 'play', game: info.game, won: info.place === 1 && info.score > 0 }, { push: false });
+      if (s && info && cards.isDuel(info.game)) settleDuel(s, info);
       refreshOnline(accountId);
+    },
+    // Card games read the ninja's chosen deck and next House regular when the match starts.
+    playerData: (accountId, game) => {
+      const s = onlineSession(accountId);
+      if (!s || !cards.isDuel(game)) return undefined;
+      const st = cards.stateOf(progressOf(s));
+      return { deck: cards.deckFor(st, game), step: cards.ladderStep(st, game) };
     },
     log,
   });
+
+  // After a card match: stats, the daily pack, ladder prizes, and news for whoever is in the Cafe.
+  const cafeNews = [];
+  function settleDuel(s, info) {
+    const d = info.detail || {};
+    const state = progressOf(s);
+    const st = cards.stateOf(state);
+    const extra = cards.recordMatch(st, progress.dayKey(), { game: info.game, outcome: d.outcome, vsHouse: d.vsHouse, step: d.step });
+    saveProgress(s, state);
+    const coins = extra.coins + extra.sets.coins;
+    if (coins || extra.xp) db.addRewards(s.account.id, coins, extra.xp);
+    if (extra.firstWin || extra.ladder || extra.packs.length || extra.sets.names.length) {
+      send(s, { t: 'cards:reward', game: info.game, ...extra, coins });
+    }
+    if (d.headline && !d.vsHouse) {
+      cafeNews.unshift({ text: d.headline, at: Date.now() });
+      cafeNews.length = Math.min(cafeNews.length, 6);
+      toRoom('cafe', { t: 'cards:news', text: d.headline });
+    }
+    if (extra.ladder) toRoom('cafe', { t: 'cards:news', text: `${s.ninja.name} beat ${extra.ladder} on the House Ladder.` });
+  }
+  // Runs a change to the collection, saves it, pays any coins it earned and returns the new summary.
+  function withCards(s, fn) {
+    const state = progressOf(s);
+    const st = cards.stateOf(state);
+    const result = fn(st) || {};
+    saveProgress(s, state);
+    const coins = result.sets ? result.sets.coins : 0;
+    if (coins) db.addRewards(s.account.id, coins, 0);
+    if (coins) refreshOnline(s.account.id);
+    return { ...result, cards: cards.summary(st, progress.dayKey()) };
+  }
+
+  function cardsBadge(s) {
+    const st = cards.stateOf(progressOf(s));
+    return Object.values(st.packs).reduce((a, b) => a + b, 0);
+  }
 
   function publicPlayer(s) {
     return {
@@ -125,6 +173,7 @@ function start(options = {}) {
       daily: progress.summary(progressOf(s), progress.dayKey(), challengeGames()),
       beltTest: progress.beltTest(s.ninja, beltRecord(s)),
       mountain: mountain.summary(progressOf(s), progress.dayKey(), rooms, currentBeacon()),
+      cardsBadge: cardsBadge(s),
     };
   }
 
@@ -141,7 +190,7 @@ function start(options = {}) {
   function cozyTick() {
     const day = progress.dayKey();
     const lit = currentBeacon().lit;
-    const warm = authed().filter((s) => MOUNTAIN_ROOMS.has(s.roomId) && mountain.warmAt(rooms.get(s.roomId), s.x, s.y) && !minigames.lobbyOf(s.account.id));
+    const warm = authed().filter((s) => WARM_ROOMS.has(s.roomId) && mountain.warmAt(rooms.get(s.roomId), s.x, s.y) && !minigames.lobbyOf(s.account.id));
     for (const s of authed()) if (!warm.includes(s)) s.wasWarm = false;
     for (const s of warm) {
       // The first tick only notices you arrived, so walking through pays nothing.
@@ -550,6 +599,25 @@ function start(options = {}) {
       refreshOnline(s.account.id);
       return {};
     },
+
+    // ---------- card collection ----------
+    'cards:get'(s) { return withCards(s, () => ({})); },
+    'cards:seen'(s) { return withCards(s, (st) => { cards.markSeen(st); }); },
+    'cards:buy'(s, m) {
+      const pack = Data.PACKS[String(m.pack)];
+      if (!pack) fail('bad', 'That pack does not exist.');
+      if (s.ninja.coins < pack.price) fail('coins', `${pack.name} costs ${pack.price} coins.`);
+      const out = withCards(s, (st) => { cards.addPack(st, pack.id); });
+      db.addRewards(s.account.id, -pack.price, 0);
+      refreshOnline(s.account.id);
+      return out;
+    },
+    'cards:open'(s, m) { const out = withCards(s, (st) => cards.openPack(st, String(m.pack))); pushYou(s); return out; },
+    'cards:craft'(s, m) { return withCards(s, (st) => cards.craft(st, String(m.id))); },
+    'cards:dissolve'(s, m) { return withCards(s, (st) => cards.dissolve(st, String(m.id))); },
+    'cards:deck'(s, m) { return withCards(s, (st) => { cards.saveDeck(st, m.slot, m.name, m.cards); }); },
+    'cards:active'(s, m) { return withCards(s, (st) => { cards.setActive(st, String(m.game), m.slot); }); },
+    'cards:hall'() { return { top: db.topCardPlayers(cards.GAMES, 8), news: cafeNews }; },
 
     // ---------- minigames ----------
     // Every installed and planned game, where its spots are, and how full each lobby is.

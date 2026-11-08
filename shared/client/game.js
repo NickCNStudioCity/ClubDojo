@@ -106,8 +106,11 @@
     // Mountain Town and Peak: the day's card, the Guide, cocoa, the bell and finds.
     const mountain = window.ClubDojoMountainUi.create({ h, conn, world, state, toasts, toast: (m, bad) => toast(m, bad), openModal: (...a) => openModal(...a), closeModal: () => closeModal(), confetti: (...a) => confetti(...a), showBanner: (...a) => showBanner(...a), chatLine: (...a) => chatLine(...a) });
 
+    // The card collection screen, and the Cafe's cat, piano and Hall of Fame.
+    const cardsUi = window.ClubDojoCards.create({ root: win, h, conn, world, state, toast: (m, bad) => toast(m, bad), toasts, openModal: (...a) => openModal(...a), closeModal: () => closeModal(), confetti: (...a) => confetti(...a), chatLine: (...a) => chatLine(...a) });
+
     const menuItems = [
-      ['Quests', openQuests, true], ['Ninja', openNinja], ['Inventory', openInventory], ['Shop', openShop],
+      ['Quests', openQuests, true], ['Ninja', openNinja], ['Cards', () => cardsUi.open()], ['Inventory', openInventory], ['Shop', openShop],
       ['Friends', openFriends], ['Minigames', openMinigames, true], ['Emotes', () => { ui.emotePop.hidden = !ui.emotePop.hidden; }],
     ];
 
@@ -327,7 +330,7 @@
         h('div', { class: 'foot' }, h('span', { class: 'muted' }, `${me.xp.toLocaleString()} XP · ${daily ? daily.challengesDone : 0} challenges completed`), h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
     }
 
-    function openNpc(npc) { if (!mountain.talk(npc)) openSensei(npc); }
+    function openNpc(npc) { if (cardsUi.talk(npc) || mountain.talk(npc)) return; openSensei(npc); }
 
     // Sensei Oru: belt tests.
     function openSensei(npc) {
@@ -449,6 +452,7 @@
     document.addEventListener('keydown', (e) => {
       if (state.phase !== 'game') return;
       if (minigames.isOpen()) return; // the minigame owns the keyboard
+      if (cardsUi.isOpen()) return; // the card screen has its own buttons
       if (atlas.isOpen()) { atlas.key(e); return; }
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
       if (e.key === 'Escape') {

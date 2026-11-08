@@ -904,6 +904,10 @@
   // Minigame pavilion: footprint MINIGAME_SPOT (3x2), pad tile in front.
   function spotDrawable(sp, T, time, status) {
     if (sp.game === 'fishing') return dockDrawable(sp, T, time, status);
+    if (Art.spots && Art.spots[sp.game]) {
+      const { w: sw, h: sh } = P.MINIGAME_SPOT;
+      return { depth: sp.y + sh, draw(ctx) { Art.spots[sp.game](ctx, sp, sp.x * T, sp.y * T, sw * T, sh * T, T, time, status); drawSpotPadAndStatus(ctx, sp, T, time, status, (sp.x + sw / 2) * T, (sp.y - 1.05) * T); } };
+    }
     const { w, h } = P.MINIGAME_SPOT;
     const x = sp.x * T, y = sp.y * T, W = w * T, H = h * T;
     return {

@@ -291,9 +291,10 @@ function mountainTown() {
   rect(g, 18, 20, 6, 2, ':'); // grove clearing
   rect(g, 30, 14, 2, 1, ':'); // steps down to the hot spring
   rect(g, 28, 15, 9, 5, ':'); // the hot spring (walkable: wade in)
-  for (const [x, y, w, h] of [[14, 15, 2, 2], [1, 15, 2, 3], [24, 14, 3, 1], [16, 19, 2, 1], [24, 19, 1, 2], [5, 21, 7, 1]]) rect(g, x, y, w, h, 'f');
+  for (const [x, y, w, h] of [[1, 15, 2, 3], [24, 14, 3, 1], [24, 19, 1, 2], [5, 21, 7, 1]]) rect(g, x, y, w, h, 'f');
+  rect(g, 16, 19, 4, 2, ':'); // the Cafe's front step, joining the lane
   const pines = [[1, 5], [2, 9], [14, 6], [1, 16], [1, 20], [2, 22], [13, 22], [16, 22], [27, 22], [34, 22], [38, 21], [38, 16], [38, 5]];
-  const larches = [[15, 8], [15, 17], [17, 18], [24, 16], [26, 19], [18, 15], [24, 22], [15, 21], [29, 21], [36, 21], [10, 22]];
+  const larches = [[15, 8], [24, 16], [26, 19], [24, 22], [15, 21], [29, 21], [36, 21], [10, 22]];
   const props = [
     { type: 'alpine', x: 0, y: 0, w: TW, h: 4 },
     { type: 'minegate', x: 11, y: 1, w: 4, h: 3 },
@@ -304,6 +305,8 @@ function mountainTown() {
     { type: 'hotspring', x: 28, y: 15, w: 9, h: 5, warm: true },
     S({ type: 'noticeboard', x: 5, y: 11, w: 2, h: 1 }),
     S({ type: 'npc', npc: 'guide', x: 8, y: 11, name: 'Guide Yuki', gi: '#2f6d8c', headband: '#f5d33b', belt: 'brown', hat: true, hover: 'Talk to Guide Yuki' }),
+    // The Cafe: card tables, a fire and a place to sit. The door is on its south side.
+    S({ type: 'cafe-front', x: 14, y: 14, w: 6, h: 5, label: 'CAFE' }),
     S({ type: 'cocoacart', x: 17, y: 11, w: 3, h: 1 }),
     S({ type: 'npc', npc: 'cocoa', x: 20, y: 11, name: 'Kiku', gi: '#a8532f', headband: '#fff1d6', belt: 'orange', hat: true, hover: 'Buy cocoa from Kiku' }),
     S({ type: 'fountain', x: 7, y: 16, w: 3, h: 3 }),
@@ -325,7 +328,7 @@ function mountainTown() {
     id: 'mountain-town',
     name: 'Mountain Town',
     theme: 'alpine',
-    seedVersion: 13, // v12 is the alpine rebuild: working buildings, hot spring, Guide and cocoa
+    seedVersion: 16, // v16 adds the Cafe and its door; v12 is the alpine rebuild: working buildings, hot spring, Guide and cocoa
     width: TW,
     height: H,
     tiles: rows(g),
@@ -333,9 +336,56 @@ function mountainTown() {
     portals: [
       { x: 0, y: 12, w: 1, h: 2, to: 'grotto', tx: 38, ty: 13, label: 'Grotto' },
       { x: 12, y: 4, w: 2, h: 1, to: 'mountain-peak', tx: 12, ty: 21, label: 'Mountain Peak' },
+      { x: 16, y: 19, w: 2, h: 1, to: 'cafe', tx: 20, ty: 21, label: 'Cafe' },
     ],
     minigames: [],
     props,
+  };
+}
+
+// The Cafe, inside: four card tables down the middle, a fire and sofas to the west, the barista at
+// the back and the card dealer to the east. Art: shared/client/cafe-art.js. The fire's warmth pays
+// like the hot spring does, and pays more with company, so it is worth hanging around in here.
+function cafe() {
+  const g = grid(',');
+  const S = (p) => { rect(g, p.x, p.y, p.w || 1, p.h || 1, '#'); return p; };
+  rect(g, 0, 0, W, 4, '#'); // back wall
+  rect(g, 0, 0, 1, H, '#');
+  rect(g, W - 1, 0, 1, H, '#');
+  rect(g, 0, H - 1, W, 1, '#');
+  rect(g, 19, H - 1, 2, 1, ','); // doorway
+  rect(g, 13, 4, 14, 1, '#'); // behind the counter
+  return {
+    id: 'cafe',
+    name: 'The Cafe',
+    seedVersion: 16,
+    width: W,
+    height: H,
+    tiles: rows(g),
+    spawn: { x: 20, y: 21 },
+    portals: [{ x: 19, y: H - 1, w: 2, h: 1, to: 'mountain-town', tx: 16, ty: 20, label: 'Mountain Town' }],
+    minigames: [
+      { id: 'mg1', game: 'turncoat', x: 13, y: 9 },
+      { id: 'mg2', game: 'turncoat', x: 24, y: 9 },
+      { id: 'mg3', game: 'ring-out', x: 13, y: 15 },
+      { id: 'mg4', game: 'ring-out', x: 24, y: 15 },
+    ],
+    props: [
+      { type: 'cafe-room', x: 0, y: 0, w: W, h: H },
+      S({ type: 'cafe-hearth', x: 1, y: 5, w: 4, h: 4, warm: 8 }),
+      S({ type: 'cafe-counter', x: 14, y: 5, w: 12, h: 1 }),
+      S({ type: 'npc', npc: 'cocoa', x: 19, y: 4, name: 'Mochi', kicker: 'The Cafe', gi: '#7a4a2a', headband: '#fff1d6', belt: 'orange', hover: 'Buy cocoa from Mochi' }),
+      S({ type: 'cafe-booth', x: 30, y: 4, w: 6, h: 2 }),
+      S({ type: 'npc', npc: 'dealer', x: 32, y: 6, name: 'Dealer Ren', gi: '#3f4fa8', headband: '#f5b82e', belt: 'black', hover: 'Cards, packs and decks' }),
+      S({ type: 'cafe-board', interact: 'hall', x: 36, y: 9, w: 3, h: 2, hover: 'Hall of Fame' }),
+      S({ type: 'cafe-sofa', x: 6, y: 11, w: 4, h: 1, color: '#2f6d62' }),
+      S({ type: 'cafe-chair', x: 10, y: 6, color: '#a8532f' }), S({ type: 'cafe-chair', x: 10, y: 9, color: '#a8532f' }),
+      S({ type: 'cafe-cat', interact: 'cat', x: 5, y: 9, hover: 'Pet the cafe cat' }),
+      S({ type: 'cafe-shelf', x: 1, y: 13, w: 1, h: 4 }), S({ type: 'cafe-shelf', x: 38, y: 13, w: 1, h: 4 }),
+      S({ type: 'cafe-piano', interact: 'piano', x: 33, y: 19, w: 4, h: 2, hover: 'Play the piano' }),
+      S({ type: 'cafe-sofa', x: 3, y: 20, w: 4, h: 1, color: '#7a3b5e' }), S({ type: 'table', x: 8, y: 20 }),
+      ...[[1, 10], [1, 21], [38, 7], [38, 21], [12, 22], [27, 22]].map(([x, y]) => S({ type: 'cafe-plant', x, y })),
+    ],
   };
 }
 
@@ -398,7 +448,7 @@ function mountainPeak() {
 // Bump SEED_VERSION and set seedVersion on a room to push a new starter layout to
 // existing servers on their next start (db.js keeps the old layout in room_versions).
 function seedRooms() {
-  return [plaza(), dojo(), ramen(), sportsPark(), grotto(), cave(), mountainTown(), mountainPeak()];
+  return [plaza(), dojo(), ramen(), sportsPark(), grotto(), cave(), mountainTown(), mountainPeak(), cafe()];
 }
-seedRooms.SEED_VERSION = 14;
+seedRooms.SEED_VERSION = 16;
 module.exports = seedRooms;
