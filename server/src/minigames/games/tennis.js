@@ -19,7 +19,8 @@ const NET = H / 2;
 const BASE = 1.5;           // distance from each end to the baseline
 const LINE_L = 2.5, LINE_R = W - 2.5; // singles sidelines
 const SPEED = 11;           // player speed, units per second
-const BALL = 14;            // base ball speed, units per second (power shots fly faster)
+const BALL = 14;            // base ball speed, units per second: a volley floats at 0.6x, a full power shot flies at 1.3x
+const MIN_FLIGHT_MS = 650;  // even a short shot stays in the air this long
 const REACH = 2.6;          // how close the ball's landing spot must be to a player to return it
 const EARLY_MS = 350;       // a swing up to this long before the ball lands still counts, and sends it left
 const LATE_MS = 250;        // a swing up to this long after it lands still counts, and sends it right
@@ -69,8 +70,8 @@ function shiftFor(deltaMs) {
 // Bot strength by level: reaction delay (ms), speed (units/s), chance of an error, chance of a drop shot.
 function botSkill(lv) {
   return {
-    react: Math.max(140, 470 - lv * 55),
-    speed: Math.min(11, 6.8 + lv * 0.6),
+    react: Math.max(150, 560 - lv * 60),
+    speed: Math.min(11, 6 + lv * 0.65),
     error: Math.max(0.03, 0.13 - lv * 0.015),
     drop: Math.min(0.3, 0.06 + lv * 0.04),
   };
@@ -168,7 +169,7 @@ function createMatch(ctx) {
     for (const p of sides) p.swing = null;
     const o = opts || {};
     const d = Math.hypot(tx - ox, ty - oy);
-    const speed = BALL * (0.85 + 0.45 * c) * (o.perfect ? 1.15 : 1) * (o.strike ? SUPER_SPEED : 1);
+    const speed = BALL * (0.6 + 0.7 * c) * (o.perfect ? 1.15 : 1) * (o.strike ? SUPER_SPEED : 1);
     const kind = o.strike ? 'strike' : o.serve ? 'serve' : c === 0 ? 'volley' : c > 0.6 ? 'power' : 'drive';
     flight = {
       from, ox, oy, tx, ty, c, kind,
@@ -176,7 +177,7 @@ function createMatch(ctx) {
       reach: REACH * (o.strike ? SUPER_REACH : 1),
       serve: !!o.serve,
       startMs: ctx.now(),
-      durMs: Math.max(400, (d / speed) * 1000),
+      durMs: Math.max(MIN_FLIGHT_MS, (d / speed) * 1000),
     };
     ball.x = ox; ball.y = oy;
     if (!o.serve) rally++;
@@ -212,7 +213,7 @@ function createMatch(ctx) {
     }
     const strike = !serve && lv >= 3 && c >= SUPER_MIN_C && p.focus >= 1 && ctx.randomInt(2) === 0;
     if (strike) { p.focus = 0; c = 1; ty = depthFor(1, p.bottom); }
-    else if (!serve) p.focus = Math.min(1, p.focus + FOCUS_HIT);
+    else if (!serve && lv >= 3) p.focus = Math.min(1, p.focus + FOCUS_HIT);   // the bot only builds Focus once it can use it
     launch(p, ox, oy, clamp(tx, 0.5, W - 0.5), ty, c, { strike, serve });
   }
 
