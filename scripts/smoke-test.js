@@ -113,6 +113,31 @@ const expectError = async (p, code) => {
     assert(you.ninja.beltTest && you.ninja.beltTest.belt === 'yellow' && !you.ninja.beltTest.ready, 'belt test summary');
   });
 
+  await check('mountain rules: finds, bell streak, beacon and warming up', async () => {
+    const M = require('../server/src/mountain');
+    const rooms = new Map(require('../server/src/rooms-seed')().map((r) => [r.id, r]));
+    const day = '2026-11-08';
+    const finds = M.allFinds(rooms, day);
+    assert(finds.length === 5, `five finds on a normal day, got ${finds.length}`);
+    for (const f of finds) assert(P.findPath(rooms.get(f.room), rooms.get(f.room).spawn, f), `find ${f.id} is reachable`);
+    assert(M.allFinds(rooms, '2026-11-09').some((f) => f.kind === 'starstone'), 'Aurora Watch days have a Starstone');
+    const st = {};
+    const f = finds[0];
+    assert(M.gather(st, day, rooms, f.room, { x: f.x + 5, y: f.y }, f.id) === null, 'too far away to pick up');
+    assert(M.gather(st, day, rooms, f.room, { x: f.x + 1, y: f.y }, f.id).firstOfKind, 'adjacent pickup fills the journal');
+    assert(M.gather(st, day, rooms, f.room, f, f.id) === null, 'each find only once a day');
+    assert(M.ring(st, day).streak === 1 && M.ring(st, day) === null, 'one ring a day');
+    assert(M.ring(st, '2026-11-09').streak === 2 && M.ring(st, '2026-11-12').streak === 1, 'a missed day resets the bell streak');
+    const b = M.beaconFor(null, day);
+    M.noteVisitor(b, 1); M.noteVisitor(b, 2);
+    assert(M.beaconGoal(b) === 2 && !M.addRing(b, 1) && M.addRing(b, 2) && b.lit, 'beacon lights when the goal is reached');
+    const cold = {};
+    assert(M.cozyTick(cold, day, { company: true, beaconLit: true }) === 3, 'company and the beacon speed up warming');
+    M.stateOf(cold, day).cozy = M.cozyCap(day) - 1;
+    assert(M.cozyTick(cold, day, { company: true, beaconLit: true }) === 1 && M.cozyTick(cold, day, {}) === 0, 'warming up stops at the daily limit');
+    assert(M.warmAt(rooms.get('mountain-peak'), 6, 17) && !M.warmAt(rooms.get('mountain-peak'), 30, 6), 'the campfire is warm, the far side is not');
+  });
+
   await check('daily challenge rules: rotation, progress, streak gaps', async () => {
     const pr = require('../server/src/progress');
     const games = [{ id: 'fishing', name: 'Fishing' }, { id: 'soccer', name: 'Soccer' }];

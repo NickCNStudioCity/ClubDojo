@@ -283,7 +283,7 @@ function mountainTown() {
   rect(g, 30, 14, 2, 1, ':'); // steps down to the hot spring
   rect(g, 28, 15, 9, 5, ':'); // the hot spring (walkable: wade in)
   for (const [x, y, w, h] of [[14, 15, 2, 2], [1, 15, 2, 3], [24, 14, 3, 1], [16, 19, 2, 1], [24, 19, 1, 2], [5, 21, 7, 1]]) rect(g, x, y, w, h, 'f');
-  const pines = [[1, 5], [2, 9], [14, 6], [1, 16], [1, 20], [2, 22], [13, 22], [16, 22], [27, 22], [34, 22], [38, 21], [38, 16], [38, 12]];
+  const pines = [[1, 5], [2, 9], [14, 6], [1, 16], [1, 20], [2, 22], [13, 22], [16, 22], [27, 22], [34, 22], [38, 21], [38, 16], [38, 5]];
   const larches = [[15, 8], [15, 17], [17, 18], [24, 16], [26, 19], [18, 15], [24, 22], [15, 21], [29, 21], [36, 21], [10, 22]];
   const props = [
     { type: 'alpine', x: 0, y: 0, w: TW, h: 4 },
@@ -298,8 +298,8 @@ function mountainTown() {
     S({ type: 'cocoacart', x: 17, y: 11, w: 3, h: 1 }),
     S({ type: 'npc', npc: 'cocoa', x: 20, y: 11, name: 'Kiku', gi: '#a8532f', headband: '#fff1d6', belt: 'orange', hat: true, hover: 'Buy cocoa from Kiku' }),
     S({ type: 'fountain', x: 7, y: 16, w: 3, h: 3 }),
-    S({ type: 'stall', x: 3, y: 14, w: 3, h: 1, awning: '#c0473a' }),
-    S({ type: 'stall', x: 11, y: 14, w: 3, h: 1, awning: '#2f8a8c' }),
+    S({ type: 'stall', x: 3, y: 16, w: 3, h: 1, awning: '#c0473a' }),
+    S({ type: 'stall', x: 11, y: 16, w: 3, h: 1, awning: '#2f8a8c' }),
     S({ type: 'bench', x: 4, y: 19, w: 2, h: 1 }), S({ type: 'bench', x: 11, y: 19, w: 2, h: 1 }),
     S({ type: 'bench', x: 19, y: 22, w: 2, h: 1 }), S({ type: 'bench', x: 22, y: 22, w: 2, h: 1 }),
     S({ type: 'snowman', x: 25, y: 21 }), S({ type: 'snowman', x: 12, y: 17, variant: 1 }),
@@ -310,13 +310,13 @@ function mountainTown() {
     { type: 'flags', x: 11, y: 7.2, x2: 16, y2: 6.6, depth: 24 },
     { type: 'flags', x: 26, y: 6.8, x2: 31, y2: 7.4, depth: 24 },
     ...[[1, 11], [10, 14], [15, 11], [24, 14], [29, 11], [37, 11], [14, 20], [19, 19], [23, 19]].map(([x, y]) => ({ type: 'lamp', x, y })),
-    { type: 'sign', x: 4, y: 11, text: 'Mountain Town' },
+    { type: 'sign', x: 2, y: 11, text: 'Mountain Town' },
   ];
   return {
     id: 'mountain-town',
     name: 'Mountain Town',
     theme: 'alpine',
-    seedVersion: 12, // v12 is the alpine rebuild: working buildings, hot spring, Guide and cocoa
+    seedVersion: 13, // v12 is the alpine rebuild: working buildings, hot spring, Guide and cocoa
     width: TW,
     height: H,
     tiles: rows(g),
@@ -352,6 +352,7 @@ function mountainPeak() {
   pines.push([3, 6], [15, 20], [18, 22], [3, 14], [9, 22], [25, 22], [36, 22], [37, 10]);
   const props = [
     { type: 'alpine', x: 0, y: 0, w: PW, h: 4, high: true },
+    { type: 'lakeshore', x: 23, y: 12, w: 16, h: 10 },
     S({ type: 'bell', interact: 'bell', x: 18, y: 4, w: 5, h: 4, hover: 'Ring the Summit Bell' }),
     S({ type: 'beacon', x: 25, y: 5, w: 2, h: 2 }),
     S({ type: 'gondola', x: 33, y: 4, w: 4, h: 3, toX: 42, toY: 10 }),
@@ -374,7 +375,7 @@ function mountainPeak() {
     id: 'mountain-peak',
     name: 'Mountain Peak',
     theme: 'summit',
-    seedVersion: 12,
+    seedVersion: 13,
     width: PW,
     height: H,
     tiles: rows(g),
@@ -390,5 +391,5 @@ function mountainPeak() {
 function seedRooms() {
   return [plaza(), dojo(), ramen(), sportsPark(), grotto(), cave(), mountainTown(), mountainPeak()];
 }
-seedRooms.SEED_VERSION = 12;
+seedRooms.SEED_VERSION = 13;
 module.exports = seedRooms;

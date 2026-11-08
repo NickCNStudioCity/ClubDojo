@@ -52,8 +52,9 @@
         if (state.pendingNpc) {
           const npc = state.pendingNpc;
           state.pendingNpc = null;
-          if (Math.max(Math.abs(npc.x - t.x), Math.abs(npc.y - t.y)) <= 2) openSensei(npc);
+          if (P.propDistance(npc, t.x, t.y) <= 2) openNpc(npc);
         }
+        mountain.arrived(t);
         if (state.pendingSpot) {
           const spot = (state.room.minigames || []).find((sp) => sp.id === state.pendingSpot);
           state.pendingSpot = null;
@@ -102,6 +103,9 @@
       ui.chatLog,
       h('form', { class: 'chat-input', onsubmit: (e) => { e.preventDefault(); sendChat(); } }, ui.chatInput));
 
+    // Mountain Town and Peak: the day's card, the Guide, cocoa, the bell and finds.
+    const mountain = window.ClubDojoMountainUi.create({ h, conn, world, state, toasts, toast: (m, bad) => toast(m, bad), openModal: (...a) => openModal(...a), closeModal: () => closeModal(), confetti: (...a) => confetti(...a), showBanner: (...a) => showBanner(...a), chatLine: (...a) => chatLine(...a) });
+
     const menuItems = [
       ['Quests', openQuests, true], ['Ninja', openNinja], ['Inventory', openInventory], ['Shop', openShop],
       ['Friends', openFriends], ['Minigames', openMinigames, true], ['Emotes', () => { ui.emotePop.hidden = !ui.emotePop.hidden; }],
@@ -124,11 +128,13 @@
       ui.emotePop,
       h('nav', { class: 'panel menu', 'aria-label': 'Game menu' },
         menuItems.map(([label, fn, primary]) => h('button', { class: `btn${primary ? '' : ' alt'}`, onclick: fn }, label))),
+      mountain.panel,
     );
 
     function renderHud() {
       const me = state.me;
       if (!me) return;
+      mountain.update();
       const belt = P.beltById(me.belt);
       const next = P.nextBelt(me.belt);
       ui.sash.style.background = belt.color;
@@ -213,12 +219,13 @@
       let target = t;
       state.pendingSpot = null;
       state.pendingNpc = null;
-      const npc = World.npcAt(state.room, t.x, t.y);
+      const npc = World.interactAt(state.room, t.x, t.y);
       if (npc) {
         // Clicking Sensei walks up to him and opens his dialog on arrival.
         const me0 = world.players.get(state.me.id);
-        if (me0 && Math.max(Math.abs(npc.x - me0.x), Math.abs(npc.y - me0.y)) <= 2 && !me0.path.length) { openSensei(npc); return; }
-        const near = [[0, 1], [-1, 1], [1, 1], [0, 2], [-1, 0], [1, 0]].map(([dx, dy]) => ({ x: npc.x + dx, y: npc.y + dy }))
+        if (me0 && P.propDistance(npc, me0.x, me0.y) <= 2 && !me0.path.length) { openNpc(npc); return; }
+        const midX = npc.x + Math.floor((npc.w || 1) / 2), lowY = npc.y + (npc.h || 1) - 1;
+        const near = [[0, 1], [-1, 1], [1, 1], [0, 2], [-1, 0], [1, 0]].map(([dx, dy]) => ({ x: midX + dx, y: lowY + dy }))
           .find((c) => P.isWalkable(state.room, c.x, c.y) && !P.portalAt(state.room, c.x, c.y));
         if (near) { state.pendingNpc = npc; t = near; target = near; }
       }
@@ -240,7 +247,7 @@
       if (me && me.x === target.x && me.y === target.y && !me.path.length) {
         if (state.pendingPortal) { state.pendingPortal = false; conn.request('portal').catch((e) => toast(e.message, true)); }
         if (state.pendingSpot) { const id = state.pendingSpot; state.pendingSpot = null; minigames.join(id); }
-        if (state.pendingNpc) { const n = state.pendingNpc; state.pendingNpc = null; openSensei(n); }
+        if (state.pendingNpc) { const n = state.pendingNpc; state.pendingNpc = null; openNpc(n); }
         return;
       }
       const failed = (e) => { state.pendingPortal = false; state.pendingSpot = null; state.pendingNpc = null; world.showMarker(target, false); if (e.code === 'busy') toast(e.message, true); };
@@ -319,6 +326,8 @@
         ...belts,
         h('div', { class: 'foot' }, h('span', { class: 'muted' }, `${me.xp.toLocaleString()} XP · ${daily ? daily.challengesDone : 0} challenges completed`), h('button', { class: 'btn ghost', onclick: closeModal }, 'Close')));
     }
+
+    function openNpc(npc) { if (!mountain.talk(npc)) openSensei(npc); }
 
     // Sensei Oru: belt tests.
     function openSensei(npc) {
@@ -466,6 +475,7 @@
       state.pendingSpot = null;
       renderRoomTag();
       renderExits();
+      mountain.update();
       if (m.updated) toast(`${m.room.name} was just updated by a Grandmaster`);
       else chatLine(`You entered ${m.room.name}.`, 'sys');
       showGame();
