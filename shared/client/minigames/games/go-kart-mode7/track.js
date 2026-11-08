@@ -74,5 +74,28 @@
     return { a: { x: a.x + nx * HALF_WIDTH, y: a.y + ny * HALF_WIDTH }, b: { x: a.x - nx * HALF_WIDTH, y: a.y - ny * HALF_WIDTH } };
   }
 
-  return { TRACK, HALF_WIDTH, WALL_MARGIN, KART_RADIUS, GRID_GAP, WORLD, nearest, gridSlot, startLine };
+  // Point on the centreline at distance s, with the unit direction of travel there.
+  function pointAt(s) {
+    const L = TRACK.length;
+    s = ((s % L) + L) % L;
+    let i = 0;
+    while (i < TRACK.seg.length - 1 && TRACK.cum[i + 1] <= s) i++;
+    const sg = TRACK.seg[i];
+    const t = (s - TRACK.cum[i]) / sg.len;
+    return { x: TRACK.pts[i].x + sg.dx * t, y: TRACK.pts[i].y + sg.dy * t, dx: sg.dx / sg.len, dy: sg.dy / sg.len };
+  }
+
+  // Boost pads on the three straightest stretches. `lat` is the offset across the road (positive is
+  // to the driver's left), so the racing line has to move to pick them up. Driving over one (within
+  // BOOST_PAD_RADIUS of its centre) gives a short burst of speed.
+  const BOOST_PAD_RADIUS = 17;
+  const BOOST_PADS = [{ s: 300, lat: -22 }, { s: 690, lat: 22 }, { s: 1300, lat: 0 }].map((b) => {
+    const p = pointAt(b.s);
+    return { s: b.s, x: p.x + p.dy * b.lat, y: p.y - p.dx * b.lat, h: Math.atan2(p.dy, p.dx) };
+  });
+
+  return {
+    TRACK, HALF_WIDTH, WALL_MARGIN, KART_RADIUS, GRID_GAP, WORLD, BOOST_PADS, BOOST_PAD_RADIUS,
+    nearest, gridSlot, startLine, pointAt,
+  };
 });

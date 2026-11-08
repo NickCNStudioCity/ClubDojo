@@ -183,18 +183,26 @@ console.log('Checking kart physics at the wall');
 const kartGame = require('../server/src/minigames/games/go-kart-race');
 
 // One kart on a virtual clock. drive(kart snapshot, seconds) -> controls; returns a snapshot per step.
-function driveSolo(seconds, drive) {
+// No CPU racers unless asked for, so the kart has the track to itself. `out` collects the race's
+// messages ({ to, ...msg }) and its results.
+function driveSolo(seconds, drive, { cpuRacers = 0, out = {} } = {}) {
   let now = 0, last = null;
+  out.msgs = [];
+  out.results = null;
   const ctx = {
-    game: kartGame.id, settings: { ...kartGame.defaults }, players: [{ id: 1, name: 'A', loadout: {} }],
-    isPlaying: () => true, send: () => {}, log: () => {},
-    broadcast: (m) => { if (m.type === 'state') last = m.karts[0]; },
-    after: () => 0, every: () => 0, cancel: () => {}, now: () => now, randomInt: () => 0, end: () => {},
+    game: kartGame.id, settings: { ...kartGame.defaults, cpuRacers }, players: [{ id: 1, name: 'A', loadout: {} }],
+    isPlaying: () => true, log: () => {},
+    send: (to, m) => out.msgs.push({ to, ...m }),
+    broadcast: (m) => {
+      if (m.type === 'state') { last = m.karts[0]; out.state = m; } else out.msgs.push(m);
+    },
+    after: () => 0, every: () => 0, cancel: () => {}, now: () => now, randomInt: () => 0,
+    end: (r) => { if (!out.results) out.results = r; },
   };
   const game = kartGame.create(ctx);
   game.start();
   const trace = [];
-  for (let t = 0; t < seconds; t += 1 / 60) {
+  for (let t = 0; t < seconds && !out.results; t += 1 / 60) {
     game.input(1, { type: 'ctl', ...drive(last, t) });
     game.tick(1 / 60);
     now += 1000 / 60;
@@ -234,6 +242,92 @@ test('a kart against the wall can steer back onto the road', () => {
   const end = trace[trace.length - 1];
   assert.ok(end.d < T.HALF_WIDTH, `still ${end.d.toFixed(0)} from the centreline after 3 s of steering away`);
   assert.ok(Math.abs(end.v) > 150, `only doing ${end.v} after getting free`);
+});
+
+console.log('Checking boost pads, drifting, CPU racers and lap times');
+
+// Follows the centreline (or a line `lane` units to the driver's right), like a tidy player.
+function followLine(k, { lane = 0, ahead = 90, ...extra } = {}) {
+  if (!k) return { steer: 0, gas: true, brake: false };
+  const n = T.nearest(k.x, k.y);
+  const p = T.pointAt(n.s + ahead);
+  const tx = p.x - p.dy * lane, ty = p.y + p.dx * lane;
+  const want = Math.atan2(ty - k.y, tx - k.x);
+  const turn = Math.atan2(Math.sin(want - k.h), Math.cos(want - k.h));
+  return { steer: clamp(turn * 3, -1, 1), gas: true, brake: false, ...extra };
+}
+
+test('boost pads sit on the road, clear of the start line, and the CPU line can reach them', () => {
+  assert.strictEqual(T.BOOST_PADS.length, 3);
+  for (const pad of T.BOOST_PADS) {
+    const n = T.nearest(pad.x, pad.y);
+    assert.ok(n.d + T.BOOST_PAD_RADIUS <= T.HALF_WIDTH, `pad at s=${pad.s} pokes off the road (d=${n.d.toFixed(1)})`);
+    assert.ok(n.s > 150 && n.s < T.TRACK.length - 150, `pad at s=${n.s.toFixed(0)} is too near the start`);
+  }
+});
+
+test('a boost pad lifts the kart past its top speed, then it eases back down', () => {
+  const trace = driveSolo(15, (k) => followLine(k));
+  const top = Math.max(...trace.map((s) => s.v));
+  const { maxSpeed, boostSpeed } = kartGame.defaults;
+  assert.ok(top > maxSpeed + 40, `top speed ${top} never went much past ${maxSpeed}`);
+  assert.ok(top <= boostSpeed + 1, `top speed ${top} ran past the boost cap ${boostSpeed}`);
+  assert.ok(trace.some((s) => s.b), 'never boosted');
+  // Between boosts the speed settles back to the normal top speed.
+  assert.ok(trace.some((s, i) => i > 0 && !s.b && trace[i - 1].b === 0 && s.v <= maxSpeed), 'speed never came back down');
+});
+
+test('holding a drift charges a mini-turbo that fires on release; the grass loses it', () => {
+  const out = {};
+  // Drive a lap's worth on the centreline, but drift through the long right-hander (from s≈760).
+  let started = null;
+  driveSolo(9, (k, t) => {
+    if (!k) return followLine(k);
+    const s = T.nearest(k.x, k.y).s;
+    const inBend = s > 760 && s < 1280;
+    if (inBend && started === null) started = t;
+    const hold = inBend && t - started < 1.8;
+    return followLine(k, { drift: hold });
+  }, { out });
+  const turbo = out.msgs.filter((m) => m.type === 'boost' && m.from === 'drift');
+  assert.ok(turbo.length >= 1, 'no mini-turbo after a 1.8 s drift');
+  assert.strictEqual(turbo[0].level, 2, `held 1.8 s but only reached level ${turbo[0].level}`);
+
+  // Drifting straight onto the grass pays nothing.
+  const grass = {};
+  driveSolo(4, (k, t) => (t < 1.5 ? followLine(k) : { steer: 1, gas: true, brake: false, drift: t < 3.8 }), { out: grass });
+  assert.ok(!grass.msgs.some((m) => m.type === 'boost' && m.from === 'drift'), 'got a mini-turbo after running onto the grass');
+});
+
+test('CPU racers fill the grid, race the lap, and the race ends when the ninja finishes', () => {
+  const out = {};
+  driveSolo(120, (k) => followLine(k), { cpuRacers: 3, out });
+  const go = out.msgs.find((m) => m.type === 'go');
+  assert.strictEqual(go.karts.length, 4, 'grid not filled to 4');
+  assert.strictEqual(go.karts.filter((k) => k.cpu).length, 3);
+  assert.ok(out.results, 'race never ended');
+  assert.deepStrictEqual(out.results.map((r) => r.id), [1], 'results must list only ninjas');
+  const r = out.results[0];
+  assert.strictEqual(r.detail.racers, 4);
+  assert.ok(r.detail.finished, 'tidy driver did not finish');
+  // The CPUs drove the track properly (well over two laps each by the time the ninja finished).
+  const cpus = out.state.karts.filter((k) => String(k.id).startsWith('cpu-'));
+  for (const c of cpus) assert.ok(c.p > T.TRACK.length * 2, `${c.id} only got ${c.p} along`);
+  // Score: 5 a CPU beaten, 5 for finishing, 3 if the fastest lap.
+  const beaten = 4 - r.detail.place;
+  assert.strictEqual(r.score, beaten * 5 + 5 + (r.detail.fastestLap ? 3 : 0));
+});
+
+test('lap times: one per lap, adding up to the race time, with the best one tracked', () => {
+  const out = {};
+  driveSolo(120, (k) => followLine(k), { out });
+  const laps = out.msgs.filter((m) => m.type === 'lap');
+  assert.deepStrictEqual(laps.map((l) => l.lap), [1, 2, 3]);
+  const total = laps.reduce((a, l) => a + l.ms, 0);
+  const fin = out.msgs.find((m) => m.type === 'finish');
+  near(total, fin.timeMs, 20, 'lap sum');
+  near(laps[2].best, Math.min(...laps.map((l) => l.ms)), 0, 'best lap');
+  assert.strictEqual(out.results[0].detail.bestLapMs, laps[2].best);
 });
 
 console.log(failures ? `\n${failures} problem(s) found.` : '\nMode 7 maths look good.');
