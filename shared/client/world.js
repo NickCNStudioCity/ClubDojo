@@ -6,7 +6,7 @@
   const BUBBLE_MS = 6000;
   const EMOTE_MS = 2500;
 
-  const COVERING_PROPS = new Set(['forest', 'mountains', 'building', 'wall', 'counter', 'table', 'tree', 'dummy', 'npc', 'cave']);
+  const COVERING_PROPS = new Set(['forest', 'mountains', 'building', 'wall', 'counter', 'table', 'tree', 'dummy', 'npc']);
 
   function hash(x, y) {
     let h = (x * 374761393 + y * 668265263) | 0;
@@ -286,7 +286,7 @@
   // Props: each returns its depth (bottom edge in tile units) and a draw function.
   function propDrawable(p, T, time) {
     const x = p.x * T, y = p.y * T, w = (p.w || 1) * T, h = (p.h || 1) * T;
-    const depth = p.type === 'mountains' || p.type === 'forest' || p.type === 'wall' || p.type === 'court' || p.type === 'track' || p.type === 'cave' ? -1 : p.y + (p.h || 1);
+    const depth = p.type === 'mountains' || p.type === 'forest' || p.type === 'wall' || p.type === 'court' || p.type === 'track' ? -1 : p.y + (p.h || 1);
     const draw = {
       building(ctx) {
         ctx.fillStyle = 'rgba(0,0,0,.12)';
@@ -425,38 +425,6 @@
       },
       court(ctx) { drawCourt(ctx, p, x, y, w, h, T); },
       track(ctx) { drawKartTrack(ctx, x, y, w, h, T); },
-      // Cave: a rock mass with a dark hollow. The hollow sits on the cave floor tiles
-      // (inset 2 tiles from the left, right and top, with 1 tile of rock below it), so ninjas
-      // walk inside it. A 2-tile mouth is cut through the bottom row at the centre.
-      cave(ctx) {
-        ctx.fillStyle = '#5d5a63';
-        roundRect(ctx, x, y, w, h, T * 0.4);
-        ctx.fill();
-        ctx.fillStyle = '#7a7680'; // lit top edge
-        ctx.fillRect(x + T * 0.4, y + T * 0.15, w - T * 0.8, T * 0.2);
-        const hx = x + T * 2, hy = y + T * 2, hw = w - T * 4, hh = h - T * 3;
-        ctx.fillStyle = '#2a2430';
-        roundRect(ctx, hx, hy, hw, hh + T * 0.5, T * 1.2);
-        ctx.fill();
-        ctx.fillRect(x + w / 2 - T, hy + hh, T * 2, y + h - (hy + hh)); // mouth
-        ctx.fillStyle = '#3d3440'; // cave floor
-        ctx.fillRect(hx + T * 0.3, hy + hh - T * 0.5, hw - T * 0.6, T * 0.5);
-        // stalactites
-        ctx.fillStyle = '#8c8794';
-        for (let i = 0; i < 6; i++) {
-          const sx = hx + T * (0.6 + i * 1.6);
-          ctx.beginPath();
-          ctx.moveTo(sx, hy);
-          ctx.lineTo(sx + T * 0.35, hy);
-          ctx.lineTo(sx + T * 0.17, hy + T * (0.35 + hash(i, 7) * 0.4));
-          ctx.closePath();
-          ctx.fill();
-        }
-        // torch glow on the rock face
-        const flick = 0.5 + 0.5 * Math.sin(time / 180);
-        ctx.fillStyle = `rgba(255,170,70,${0.25 + flick * 0.15})`;
-        ctx.beginPath(); ctx.arc(x + w - T * 0.8, y + T * 1.2, T * 0.45, 0, Math.PI * 2); ctx.fill();
-      },
       npc(ctx) {
         drawNinja(ctx, { x: p.x + 0.5, y: p.y + 0.5, color: '#f3f8fb', headband: '#f5b82e', belt: 'black' }, T, time);
         drawLabel(ctx, p.name || 'Sensei', x + T / 2, y + T * 0.75, T, { bg: 'rgba(122,59,46,.85)' });

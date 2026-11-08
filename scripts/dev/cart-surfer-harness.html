@@ -1,0 +1,121 @@
+<!doctype html>
+<!-- Dev only: runs the Cart Surfer server rules in the browser and mounts the real client, so the
+     tunnel view can be checked without a server, login or pavilion.
+     Open with: node scripts/dev-web.js, then http://localhost:5173/scripts/dev/cart-surfer-harness.html
+     Options: ?bots=0..3 (default 2) riders who switch rails, jump and duck on their own;
+     ?ms=<round length>; ?auto=1 lets a bot steer your cart too. -->
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cart Surfer harness</title>
+  <link rel="stylesheet" href="../../shared/client/styles.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: #1b2430; color: #fff; font-family: system-ui, sans-serif; }
+    #stage { height: 100vh; }
+  </style>
+  <script src="../../shared/protocol.js"></script>
+  <script src="../../shared/client/avatar.js"></script>
+</head>
+<body>
+  <div id="stage"></div>
+  <script>
+  (async function () {
+    const h = (tag, attrs, ...kids) => {
+      const el = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs || {})) {
+        if (v == null || v === false) continue;
+        if (k === 'class') el.className = v;
+        else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+        else el.setAttribute(k, v === true ? '' : v);
+      }
+      for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
+      return el;
+    };
+
+    const src = await (await fetch('../../server/src/minigames/games/cart-surfer.js')).text();
+    const mod = { exports: {} };
+    new Function('module', 'exports', src)(mod, mod.exports);
+    const game = mod.exports;
+
+    let clientDef = null;
+    window.ClubDojoMinigames = { register: (d) => { clientDef = d; } };
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = '../../shared/client/minigames/games/cart-surfer.js';
+      s.onload = resolve; s.onerror = reject; document.head.append(s);
+    });
+
+    const q = new URLSearchParams(location.search);
+    const bots = Math.max(0, Math.min(3, Number(q.get('bots') ?? 2)));
+    const auto = q.get('auto') === '1';
+    const colors = ['#2f6fd1', '#5a3e8c', '#1f6f5c', '#8c3e3e'];
+    const players = Array.from({ length: bots + 1 }, (_, i) => ({
+      id: i + 1, name: i ? `Bot ${i}` : 'You',
+      loadout: { v: 1, id: i + 1, name: i ? `Bot ${i}` : 'You', color: colors[i], headband: ['#e8453c', '#f5b82e', '#3fbf7f', '#ffffff'][i], belt: ['yellow', 'green', 'white', 'black'][i], accessories: {} },
+    }));
+
+    let client = null;
+    let track = null;
+    let lastState = null;
+    const start = performance.now();
+    const settings = { ...game.defaults };
+    if (q.get('ms')) settings.roundMs = Number(q.get('ms'));
+    const sctx = {
+      game: game.id, settings, players,
+      isPlaying: () => true,
+      send: (id, data) => { if (id === 1 && client) client.onMessage(data); },
+      broadcast: (data) => {
+        if (data.type === 'track') track = data;
+        if (data.type === 'state') lastState = data;
+        if (client) client.onMessage(JSON.parse(JSON.stringify(data)));
+      },
+      after: (ms, fn) => setTimeout(fn, ms),
+      every: (ms, fn) => setInterval(fn, ms),
+      cancel: (t) => { clearTimeout(t); clearInterval(t); },
+      now: () => performance.now() - start,
+      randomInt: (n) => Math.floor(Math.random() * n),
+      end: (results) => { window.__results = results; console.log('round ended', results); clearInterval(loop); if (client) client.onResults(results); },
+      log: console.log,
+    };
+    const server = game.create(sctx);
+    client = clientDef.mount({
+      el: document.getElementById('stage'), youId: 1, players, h, avatar: window.ClubDojoAvatar,
+      toast: (m) => console.log('toast', m), protocol: window.ClubDojoProtocol,
+      send: (data) => server.input(1, data),
+    });
+    server.start();
+    window.__cart = { server, client, players, get state() { return lastState; }, get track() { return track; } };
+
+    // Bots look a little ahead and react to what is coming on their rail.
+    function botControls() {
+      if (!lastState || !track) return;
+      for (const p of players) {
+        if (p.id === 1 && !auto) continue;
+        const row = lastState.players[p.id];
+        if (!row) continue;
+        const [lane, y] = row;
+        if (Math.random() < 0.25) continue; // not perfect
+        const ahead = track.items.filter((it) => it.y > y + 10 && it.y < y + 70);
+        if (ahead.some((it) => it.kind === 'beam')) { server.input(p.id, { type: 'duck' }); continue; }
+        const rock = ahead.find((it) => it.kind === 'rock' && it.lane === lane);
+        if (rock) {
+          const blocked = new Set(ahead.filter((it) => it.kind === 'rock').map((it) => it.lane));
+          const to = [lane - 1, lane + 1].find((l) => l >= -1 && l <= 1 && !blocked.has(l));
+          if (to !== undefined && Math.random() < 0.7) server.input(p.id, { type: 'move', dir: to - lane });
+          else server.input(p.id, { type: 'jump' });
+        } else if (Math.random() < 0.03) server.input(p.id, { type: 'move', dir: Math.random() < 0.5 ? -1 : 1 });
+      }
+    }
+
+    let last = performance.now();
+    const loop = setInterval(() => {
+      const now = performance.now();
+      server.tick((now - last) / 1000);
+      last = now;
+      botControls();
+    }, 1000 / game.tickRate);
+  })().catch((e) => { document.body.textContent = e.stack; });
+  </script>
+</body>
+</html>
