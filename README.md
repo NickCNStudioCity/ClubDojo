@@ -97,7 +97,7 @@ Back up by copying `server/data/clubdojo.sqlite`, or use **Server > Back up now*
 - **Admin Minigames tab.** Open or close each game, set reward multipliers, and see live lobbies and top scores.
 - **Character loading.** Minigames receive each player's loadout (look and accessory slots) and draw it with the shared avatar renderer. See [docs/minigames/character-loading.md](docs/minigames/character-loading.md).
 - **Forest Village hub.** The hub is now a forest with grass, dirt paths, flowers and a pond, replacing the Snow Plaza. Existing servers upgrade the hub automatically on start, and the old layout stays in the room history.
-- **Deferred.** Belt progression and rank-ups. See [docs/notes/belt-progression.md](docs/notes/belt-progression.md).
+- **Belt tests.** Belt progression, daily challenges and login streaks. See [docs/notes/belt-progression.md](docs/notes/belt-progression.md).
 
 This changes the protocol to version 2, so v1.0.0 clients are asked to update.
 
