@@ -47,6 +47,17 @@
   const PROP_FAR_Z = 1300; // props further than this are skipped (tiny, and under the haze)
   const ordinal = (n) => `${n}${n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th'}`;
   const clock = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  // Lap and race times: 0:07.42
+  const stopwatch = (ms) => {
+    const t = Math.max(0, Math.round(ms / 10));
+    return `${Math.floor(t / 6000)}:${String(Math.floor(t / 100) % 60).padStart(2, '0')}.${String(t % 100).padStart(2, '0')}`;
+  };
+  // Personal bests (best lap, best 3-lap race) are kept on this computer only.
+  const PB_KEY = 'clubdojo.gokart.pb.v1';
+  const loadPb = () => { try { return JSON.parse(localStorage.getItem(PB_KEY)) || {}; } catch { return {}; } };
+  const savePb = (pb) => { try { localStorage.setItem(PB_KEY, JSON.stringify(pb)); } catch { /* storage off */ } };
+  // Drift spark colours by charge level (none yet, mini-turbo, super mini-turbo).
+  const SPARK = ['rgba(255,255,255,.9)', '#5ab8ff', '#ff9f2e'];
 
   // Snapshots arrive at 20 Hz. Rendering about 100 ms behind the newest one gives a sample on
   // each side of the frame time almost every time, so motion stays smooth.
@@ -80,6 +91,16 @@
         .gk-place small { font-size: 3.4cqw; opacity: .9; margin-left: .4cqw; }
         .gk-lap { position: absolute; left: 2.8%; top: 19%; font-size: 3.4cqw; }
         .gk-lap.final { color: #f5b82e; }
+        .gk-laptime { position: absolute; left: 2.8%; top: 25.5%; font-size: 2.6cqw; line-height: 1.35; font-variant-numeric: tabular-nums; }
+        .gk-laptime span { display: block; opacity: .8; font-size: 2.2cqw; }
+        .gk-laptime span.pb { color: #7be07b; opacity: 1; }
+        .gk-boost { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .2s; border-radius: 12px;
+          background: radial-gradient(ellipse at 50% 60%, transparent 55%, rgba(255,170,60,.35) 100%); }
+        .gk-boost.on { opacity: 1; }
+        .gk-drift { position: absolute; right: 2.5%; bottom: 4%; font-size: 2.6cqw; opacity: 0; transition: opacity .15s; }
+        .gk-drift.on { opacity: 1; }
+        .gk-drift.l1 { color: #5ab8ff; } .gk-drift.l2 { color: #ff9f2e; }
+        .gk-p .cpu { width: 48px; height: 48px; border-radius: 8px; display: grid; place-items: center; font-size: 26px; background: var(--kc, #555); }
         .gk-time { position: absolute; left: 50%; top: 3%; transform: translateX(-50%); font-size: 3.6cqw; background: rgba(0,0,0,.3); border-radius: 1cqw; padding: .2cqw 1.4cqw; }
         .gk-time.low { color: #ff8a80; }
         .gk-speed { position: absolute; left: 2.5%; bottom: 4%; display: flex; align-items: flex-end; gap: 1cqw; }
@@ -115,7 +136,10 @@
       }
       const hudSpeed = h('div', { class: 'gk-speed' }, speedNum, h('small', {}, 'mph'), bars);
       const status = h('div', { class: 'gk-banner' }, 'Get ready...');
-      const hud = h('div', { class: 'gk-hud' }, hudPlace, hudLap, hudTime, hudSpeed, status);
+      const hudLapTime = h('div', { class: 'gk-laptime' });
+      const hudDrift = h('div', { class: 'gk-drift' }, 'DRIFT');
+      const boostGlow = h('div', { class: 'gk-boost' });
+      const hud = h('div', { class: 'gk-hud' }, boostGlow, hudPlace, hudLap, hudLapTime, hudTime, hudSpeed, hudDrift, status);
       hudSpeed.hidden = true;
       // The banner shows one message at a time; a timed one hides itself unless replaced.
       let bannerTimer = null;
@@ -128,6 +152,14 @@
         status.className = `gk-banner${kind === 'warn' ? ' warn' : ''}`;
         if (ms) bannerTimer = later(ms, () => { bannerTimer = null; bannerKind = ''; status.classList.add('hide'); });
       }
+      // Under the lap counter: the running lap time, your best lap this race, and your all-time best.
+      function renderLapPanel(fresh = false) {
+        const current = hudLapTime.firstChild && hudLapTime.firstChild.nodeType === 3 ? hudLapTime.firstChild.textContent : '0:00.00';
+        hudLapTime.textContent = '';
+        hudLapTime.append(document.createTextNode(current),
+          h('span', {}, bestLapMs ? `Best ${stopwatch(bestLapMs)}` : ''),
+          h('span', { class: fresh ? 'pb' : '' }, pbNote));
+      }
       const canvas = h('canvas', { class: 'gk-canvas', width: VIEW_W, height: VIEW_H });
       const g = canvas.getContext('2d');
       const mapCanvas = h('canvas', { class: 'gk-map', width: 250, height: 160 });
@@ -137,7 +169,8 @@
       const view = h('div', { class: 'gk-view' }, canvas, tagLayer, mapCanvas, hud);
       const stage = h('div', { class: 'gk-stage' }, view);
       const playersRow = h('div', { class: 'gk-players' });
-      const help = h('div', { class: 'gk-help' }, 'Drive: Arrow keys or WASD. Up / W gas, Down / S brake, Left and Right to steer.');
+      const help = h('div', { class: 'gk-help' }, 'Drive: Arrow keys or WASD. Up / W gas, Down / S brake, Left and Right to steer. '
+        + 'Hold Space or Shift while turning to drift; let go once the sparks turn blue or orange for a boost. Orange pads boost too.');
       el.append(style, h('div', { class: 'gk' }, playersRow, stage, help));
 
       // Keep the 5:3 view inside the stage at any window shape (CSS alone can't fit both axes).
@@ -150,6 +183,7 @@
       if (resizer) resizer.observe(stage);
 
       // Player cards with portraits from each ninja's loadout.
+      // CPU racers get a card when the race starts (the server picks them).
       const cards = new Map();
       for (const p of ctx.players) {
         const place = h('small', {}, '—');
@@ -157,6 +191,16 @@
         cards.set(p.id, { card, place });
         playersRow.append(card);
       }
+      function addCpuCard(k) {
+        const place = h('small', {}, '—');
+        const card = h('div', { class: 'gk-p' }, h('div', { class: 'cpu', style: `--kc: ${k.color}` }, '🤖'), h('b', {}, k.name), place);
+        cards.set(k.id, { card, place });
+        playersRow.append(card);
+      }
+      let pb = loadPb();
+      let lapStartedAt = 0;  // performance.now() when your current lap began
+      let bestLapMs = 0;     // your best lap this race
+      let pbNote = '';       // last line under the lap timer
 
       let T = null;          // ClubDojoKartTrack, once loaded
       let M7 = null;         // ClubDojoMode7, once loaded
@@ -184,7 +228,7 @@
       let wrongWayChecks = 0;
 
       // Keyboard state
-      const keys = { up: false, down: false, left: false, right: false };
+      const keys = { up: false, down: false, left: false, right: false, drift: false };
       let lastSent = '';
 
       function sendControls() {
@@ -192,8 +236,9 @@
           steer: (keys.right ? 1 : 0) - (keys.left ? 1 : 0),
           gas: keys.up,
           brake: keys.down,
+          drift: keys.drift,
         };
-        const sig = `${c.steer}|${c.gas}|${c.brake}`;
+        const sig = `${c.steer}|${c.gas}|${c.brake}|${c.drift}`;
         if (sig === lastSent) return;
         lastSent = sig;
         ctx.send({ type: 'ctl', ...c });
@@ -201,6 +246,7 @@
 
       const KEYMAP = {
         ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
+        Space: 'drift', ShiftLeft: 'drift', ShiftRight: 'drift',
       };
       function onKeyDown(e) {
         const k = KEYMAP[e.code];
@@ -255,6 +301,28 @@
         }
         path(); c2.strokeStyle = COLORS.road; c2.lineWidth = HALF_WIDTH * 2; c2.stroke();
         path(); c2.strokeStyle = 'rgba(255,255,255,.75)'; c2.lineWidth = detail ? 2 : 3; c2.setLineDash([18, 14]); c2.stroke(); c2.setLineDash([]);
+        // Boost pads: an orange plate with yellow chevrons pointing the way to drive.
+        for (const pad of T.BOOST_PADS) {
+          const r = T.BOOST_PAD_RADIUS;
+          c2.save();
+          c2.translate(pad.x, pad.y);
+          c2.rotate(pad.h);
+          c2.fillStyle = '#d35400';
+          c2.fillRect(-r, -r * 0.8, r * 2, r * 1.6);
+          if (detail) {
+            c2.strokeStyle = '#ffd23f';
+            c2.lineWidth = 3.2;
+            c2.lineJoin = 'miter';
+            for (const off of [-9, 0, 9]) {
+              c2.beginPath();
+              c2.moveTo(off - 4, -r * 0.55); c2.lineTo(off + 4, 0); c2.lineTo(off - 4, r * 0.55);
+              c2.stroke();
+            }
+            c2.strokeStyle = 'rgba(0,0,0,.35)'; c2.lineWidth = 1.5;
+            c2.strokeRect(-r, -r * 0.8, r * 2, r * 1.6);
+          }
+          c2.restore();
+        }
         // Start/finish line: a checkered band across the road at point 0.
         const { a, b } = T.startLine();
         const len = Math.hypot(b.x - a.x, b.y - a.y);
@@ -337,7 +405,8 @@
           const { id, k, pt } = item;
           const s = k.sheet;
           const toKart = Math.atan2(k.shown.y - cam.y, k.shown.x - cam.x);
-          const frame = SP.frameFor(wrapAngle(k.shown.h - toKart));
+          // A drifting kart points its nose further into the bend than it is travelling.
+          const frame = SP.frameFor(wrapAngle(k.shown.h + (k.slide || 0) - toKart));
           const px = pt.scale / s.ppu; // screen pixels per sheet pixel
           const w = s.fw * px, hgt = s.fh * px;
           const x = pt.x - s.ax * px, y = pt.y - s.ay * px;
@@ -453,7 +522,9 @@
         if (!camShown.inited) { camShown.h = me.shown.h; camShown.speed = speed; camShown.inited = true; }
         camShown.h += wrapAngle(me.shown.h - camShown.h) * (1 - Math.exp(-CAM.turnFollow * dt));
         camShown.speed += (speed - camShown.speed) * (1 - Math.exp(-CAM.speedFollow * dt));
-        const sp = camShown.speed;
+        // A boost pulls the camera back and widens the view a little more than top speed does.
+        camShown.boost = (camShown.boost || 0) + ((me.b ? 1 : 0) - (camShown.boost || 0)) * (1 - Math.exp(-6 * dt));
+        const sp = camShown.speed + camShown.boost * 0.6;
         const behind = CAM.behind + (CAM.behindFast - CAM.behind) * sp;
         // Off the road the view rumbles a little, more the faster you go.
         const shake = me.o && !me.f ? Math.sin(now / 18) * CAM.shake * sp : 0;
@@ -488,6 +559,8 @@
       const SMOKE_MAX = 240;
       const wheels = new Map();   // kart id -> { h, yaw, slip, puff, marks: [{x,y}|null, {x,y}|null] }
       let smoke = [];
+      let sparks = [];            // drift sparks and boost flames: short-lived bright specks
+      const SPARK_MAX = 300;
 
       // Darkens one track-image point, by an amount 0..1, to draw a tyre mark.
       function paintMark(x, y, amount) {
@@ -523,15 +596,38 @@
           w.h = k.shown.h;
           w.yaw += (yawRate - w.yaw) * (1 - Math.exp(-12 * dt));
           const sideways = Math.abs(k.v || 0) * Math.abs(w.yaw);
-          const target = Math.min(1, Math.max(0, (sideways - SKID_START) / SKID_FULL));
+          // A drift always leaves marks, however gentle the bend.
+          const target = Math.max(k.dr ? 0.55 : 0, Math.min(1, Math.max(0, (sideways - SKID_START) / SKID_FULL)));
           w.slip += (target - w.slip) * (1 - Math.exp(-8 * dt));
-          if (w.slip < 0.2) { w.marks = [null, null]; continue; }
+          k.slide = (k.slide || 0) + ((k.dr ? Math.sign(k.dr) * 0.6 : 0) - (k.slide || 0)) * (1 - Math.exp(-10 * dt));
 
           const fx = Math.cos(k.shown.h), fy = Math.sin(k.shown.h);
           const wheelsAt = [-1, 1].map((s) => ({
             x: k.shown.x - fx * SKID_BACK - fy * SKID_SIDE * s,
             y: k.shown.y - fy * SKID_BACK + fx * SKID_SIDE * s,
           }));
+          // Drift sparks from the rear wheels (colour shows the mini-turbo charge), and flames from
+          // the exhaust while boosting.
+          if (k.dr) {
+            const level = Math.abs(k.dr) - 1;
+            w.spark = (w.spark || 0) + dt * (level ? 70 : 35);
+            while (w.spark >= 1) {
+              w.spark -= 1;
+              const p = wheelsAt[Math.random() < 0.5 ? 0 : 1];
+              sparks.push({ x: p.x, y: p.y, up: 0.5, age: 0, life: 0.18 + Math.random() * 0.15, color: SPARK[level],
+                vx: (Math.random() - 0.5) * 40 - fx * 25, vy: (Math.random() - 0.5) * 40 - fy * 25, vz: 12 + Math.random() * 18, size: 0.8 });
+            }
+          }
+          if (k.b) {
+            w.flame = (w.flame || 0) + dt * 60;
+            while (w.flame >= 1) {
+              w.flame -= 1;
+              sparks.push({ x: k.shown.x - fx * (SKID_BACK + 3), y: k.shown.y - fy * (SKID_BACK + 3), up: 2.5, age: 0,
+                life: 0.12 + Math.random() * 0.12, color: Math.random() < 0.5 ? '#ffd23f' : '#ff6b2e',
+                vx: -fx * 60 + (Math.random() - 0.5) * 12, vy: -fy * 60 + (Math.random() - 0.5) * 12, vz: 4, size: 1.6 });
+            }
+          }
+          if (w.slip < 0.2) { w.marks = [null, null]; continue; }
           wheelsAt.forEach((p, i) => {
             const prev = w.marks[i];
             if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < 25) paintMarkLine(prev, p, w.slip);
@@ -539,8 +635,9 @@
             w.marks[i] = p;
           });
 
-          // Smoke: more of it the harder the slide.
-          w.puff += dt * (14 + 50 * w.slip);
+          // Smoke: more of it the harder the slide. A drift on its own only smokes lightly (the sparks
+          // are the show there).
+          w.puff += dt * (k.dr ? 4 + 14 * w.slip : 14 + 50 * w.slip);
           while (w.puff >= 1) {
             w.puff -= 1;
             const p = wheelsAt[Math.random() < 0.5 ? 0 : 1];
@@ -551,6 +648,9 @@
         for (const p of smoke) { p.age += dt; p.x += p.vx * dt; p.y += p.vy * dt; }
         smoke = smoke.filter((p) => p.age < p.life);
         if (smoke.length > SMOKE_MAX) smoke.splice(0, smoke.length - SMOKE_MAX);
+        for (const p of sparks) { p.age += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.up += p.vz * dt; p.vz -= 60 * dt; }
+        sparks = sparks.filter((p) => p.age < p.life && p.up > 0);
+        if (sparks.length > SPARK_MAX) sparks.splice(0, sparks.length - SPARK_MAX);
       }
 
       function drawSmoke(cam) {
@@ -564,13 +664,34 @@
           g.fillStyle = `rgba(236,236,232,${(0.5 * (1 - t)).toFixed(3)})`;
           g.beginPath(); g.arc(pt.x, cy, r, 0, Math.PI * 2); g.fill();
         }
+        for (const p of sparks) {
+          const pt = M7.project(cam, p.x, p.y);
+          if (!pt || pt.z < NEAR_Z || pt.z > TAG_MAX_Z) continue;
+          const sz = Math.max(1, p.size * pt.scale * (1 - (p.age / p.life) * 0.5));
+          const sy = pt.y - p.up * pt.scale;
+          if (pt.x + sz < 0 || pt.x - sz > VIEW_W || sy + sz < 0 || sy - sz > VIEW_H) continue;
+          g.fillStyle = p.color;
+          g.fillRect(pt.x - sz / 2, sy - sz / 2, sz, sz);
+        }
       }
 
       let shownSpeed = -1;
       let shownBars = -1;
+      let shownDrift = -1;
       function updateSpeed(me) {
         const mph = Math.round(Math.abs(me.v || 0) * MPH_PER_UNIT); // 45 at the road's top speed
         if (mph !== shownSpeed) { shownSpeed = mph; speedNum.textContent = String(mph); }
+        boostGlow.classList.toggle('on', !!me.b);
+        const lv = me.dr ? Math.abs(me.dr) - 1 : -1;
+        if (lv !== shownDrift) {
+          shownDrift = lv;
+          hudDrift.className = `gk-drift${lv >= 0 ? ' on' : ''}${lv > 0 ? ` l${lv}` : ''}`;
+          hudDrift.textContent = lv === 2 ? 'DRIFT ★★' : lv === 1 ? 'DRIFT ★' : 'DRIFT';
+        }
+        // Current lap time, ticking.
+        if (running && !me.f && lapStartedAt && hudLapTime.firstChild) {
+          hudLapTime.firstChild.textContent = stopwatch(performance.now() - lapStartedAt);
+        }
         const lit = Math.round(Math.min(1, Math.abs(me.v || 0) / CAM.refSpeed) * SPEED_BARS);
         if (lit !== shownBars) {
           shownBars = lit;
@@ -640,6 +761,8 @@
           k.v = s.v;
           k.f = s.f;
           k.o = s.o;
+          k.dr = s.dr || 0;
+          k.b = s.b || 0;
           k.active = !!s.active;
           if (s.id === ctx.youId) checkLap(k);
           const c = cards.get(s.id);
@@ -655,18 +778,28 @@
           case 'go': {
             laps = m.laps;
             buildTrackImages();
-            const colorById = new Map(m.karts.map((k) => [k.id, k.color]));
+            // Every kart on the grid: the ninjas in this match plus any CPU racers the server added.
+            const playerById = new Map(ctx.players.map((p) => [p.id, p]));
             tagLayer.textContent = '';
-            karts = new Map(ctx.players.map((p) => {
-              const color = colorById.get(p.id) || '#999';
-              const band = (p.loadout && p.loadout.headband) || '#e8453c';
-              const tag = h('div', { class: 'gk-tag', hidden: true, style: `--kc: ${color}` }, p.name);
+            karts = new Map();
+            for (const info of m.karts) {
+              const p = playerById.get(info.id);
+              if (!p && !info.cpu) continue;
+              const color = info.color || '#999';
+              const name = p ? p.name : String(info.name || 'CPU');
+              const band = info.cpu ? (info.band || '#ecf0f1') : ((p.loadout && p.loadout.headband) || '#e8453c');
+              const tag = h('div', { class: 'gk-tag', hidden: true, style: `--kc: ${color}` }, name);
               tagLayer.append(tag);
-              return [p.id, { color, sheet: SP.makeKartSheet(color, band), tag, active: true, lap: 0, progress: 0, shown: { x: 0, y: 0, h: 0 }, buf: [] }];
-            }));
+              karts.set(info.id, { color, cpu: !!info.cpu, sheet: SP.makeKartSheet(color, band), tag, active: true, lap: 0, progress: 0, shown: { x: 0, y: 0, h: 0 }, buf: [] });
+              if (info.cpu && !cards.has(info.id)) addCpuCard({ id: info.id, name, color });
+            }
             running = true;
             raceEndsAt = Date.now() + m.timeMs;
             myLap = 0;
+            lapStartedAt = performance.now();
+            bestLapMs = 0;
+            pbNote = pb.lap ? `PB ${stopwatch(pb.lap)}` : '';
+            renderLapPanel();
             hudSpeed.hidden = false;
             banner('GO!', { ms: 1200 });
             updateHud();
@@ -676,10 +809,43 @@
             if (!tex) break;
             updateSnapshot(m.karts);
             break;
-          case 'finish':
+          case 'lap': {
+            // Your lap is done: the server's time is the official one.
+            const ms = Number(m.ms) || 0;
+            lapStartedAt = performance.now();
+            if (!bestLapMs || ms < bestLapMs) bestLapMs = ms;
+            const newPb = ms > 0 && (!pb.lap || ms < pb.lap);
+            if (newPb) {
+              pb = { ...loadPb(), lap: ms };
+              savePb(pb);
+            }
+            pbNote = newPb ? `NEW BEST ${stopwatch(ms)}` : (pb.lap ? `PB ${stopwatch(pb.lap)}` : '');
+            renderLapPanel(newPb);
+            // Lap banners ("LAP 2", "FINAL LAP!") come from the snapshot; add the best-lap news to them.
+            if (newPb && Number(m.lap) < laps && bannerKind !== 'warn') {
+              later(1900, () => { if (running && bannerKind !== 'warn') banner(`NEW BEST LAP!<small>${stopwatch(ms)}</small>`, { ms: 1600 }); });
+            }
+            break;
+          }
+          case 'boost':
+            if (bannerKind !== 'warn' && m.from === 'drift') banner(m.level === 2 ? 'SUPER TURBO!' : 'TURBO!', { ms: 600 });
+            break;
+          case 'finish': {
+            // The race can end in the same step (solo), before another snapshot says so.
+            const fk = karts.get(m.id);
+            if (fk) { fk.f = 1; fk.dr = 0; fk.b = 0; }
             if (m.id === ctx.youId) {
               finishedMe = true;
-              banner(`FINISH!<small>${ordinal(Number(m.place) || 0)} place</small>`);
+              const timeMs = Number(m.timeMs) || 0;
+              const key = `race${laps}`;
+              const record = timeMs > 0 && (!pb[key] || timeMs < pb[key]);
+              const prev = pb[key];
+              if (record) { pb = { ...loadPb(), [key]: timeMs }; savePb(pb); }
+              const line = record
+                ? `NEW RECORD ${stopwatch(timeMs)}${prev ? ` (was ${stopwatch(prev)})` : ''}`
+                : `${stopwatch(timeMs)}${prev ? ` · record ${stopwatch(prev)}` : ''}`;
+              banner(`FINISH!<small>${ordinal(Number(m.place) || 0)} place</small><small>${line}</small>`);
+              if (hudLapTime.firstChild) hudLapTime.firstChild.textContent = stopwatch(timeMs);
               sendControls();
               updateHud();
             } else {
@@ -687,6 +853,7 @@
               if (c) c.place.textContent = `Finished #${m.place}`;
             }
             break;
+          }
           default:
         }
       }
