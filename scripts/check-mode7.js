@@ -179,5 +179,62 @@ test('the start gantry posts stand outside the walls, across the road just past 
   assert.ok(g.low > 28, 'banner bottom must clear the camera (height up to 28)');
 });
 
+console.log('Checking kart physics at the wall');
+const kartGame = require('../server/src/minigames/games/go-kart-race');
+
+// One kart on a virtual clock. drive(kart snapshot, seconds) -> controls; returns a snapshot per step.
+function driveSolo(seconds, drive) {
+  let now = 0, last = null;
+  const ctx = {
+    game: kartGame.id, settings: { ...kartGame.defaults }, players: [{ id: 1, name: 'A', loadout: {} }],
+    isPlaying: () => true, send: () => {}, log: () => {},
+    broadcast: (m) => { if (m.type === 'state') last = m.karts[0]; },
+    after: () => 0, every: () => 0, cancel: () => {}, now: () => now, randomInt: () => 0, end: () => {},
+  };
+  const game = kartGame.create(ctx);
+  game.start();
+  const trace = [];
+  for (let t = 0; t < seconds; t += 1 / 60) {
+    game.input(1, { type: 'ctl', ...drive(last, t) });
+    game.tick(1 / 60);
+    now += 1000 / 60;
+    trace.push({ t, ...last, d: T.nearest(last.x, last.y).d });
+  }
+  return trace;
+}
+const WALL = T.HALF_WIDTH + T.WALL_MARGIN;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+test('a kart driven into the wall with the gas held slides along it instead of stopping', () => {
+  const trace = driveSolo(8, () => ({ steer: 0, gas: true, brake: false }));
+  const hit = trace.findIndex((s) => s.d >= WALL - 0.5);
+  assert.ok(hit >= 0, 'never reached the wall');
+  const after = trace.slice(hit + 30, hit + 210); // 0.5 s to 3.5 s after the first contact
+  const avg = after.reduce((a, s) => a + Math.abs(s.v), 0) / after.length;
+  assert.ok(avg > 80, `average speed after the hit was ${avg.toFixed(0)}`);
+  assert.ok(after[after.length - 1].p - after[0].p > 200, 'made almost no progress along the track');
+});
+
+test('a kart against the wall can steer back onto the road', () => {
+  let phase = 'into';
+  const trace = driveSolo(6, (k, t) => {
+    if (!k || t < 3) return { steer: 0, gas: true, brake: false };
+    phase = 'away';
+    // Aim at the centreline a little way ahead, like a player steering back onto the road.
+    const s = (T.nearest(k.x, k.y).s + 80) % T.TRACK.length;
+    let i = 0;
+    while (T.TRACK.cum[i + 1] < s) i++;
+    const f = (s - T.TRACK.cum[i]) / T.TRACK.seg[i].len;
+    const tx = T.TRACK.pts[i].x + T.TRACK.seg[i].dx * f, ty = T.TRACK.pts[i].y + T.TRACK.seg[i].dy * f;
+    const want = Math.atan2(ty - k.y, tx - k.x);
+    const turn = Math.atan2(Math.sin(want - k.h), Math.cos(want - k.h));
+    return { steer: clamp(turn * 3, -1, 1), gas: true, brake: false };
+  });
+  assert.strictEqual(phase, 'away');
+  const end = trace[trace.length - 1];
+  assert.ok(end.d < T.HALF_WIDTH, `still ${end.d.toFixed(0)} from the centreline after 3 s of steering away`);
+  assert.ok(Math.abs(end.v) > 150, `only doing ${end.v} after getting free`);
+});
+
 console.log(failures ? `\n${failures} problem(s) found.` : '\nMode 7 maths look good.');
 process.exitCode = failures ? 1 : 0;
