@@ -38,6 +38,7 @@ function plaza() {
   rect(g, 8, 18, 1, 2, ':');
   rect(g, 4, 20, 10, 1, ':');
   rect(g, 21, 21, 11, 1, ':');
+  rect(g, 13, 21, 2, 3, ':'); // path south to the Grotto
   rect(g, 37, 10, 1, 2, ':'); // path to the Sports Park gate on the east edge
   // Fishing dock: planks out over the pond (the fishing spot sits on the end).
   rect(g, 30, 16, 3, 5, ',');
@@ -50,7 +51,7 @@ function plaza() {
   for (const [x, y] of trees) g[y][x] = '#';
   return {
     id: 'plaza',
-    seedVersion: 4,
+    seedVersion: 7, // v7 adds the Grotto portal and moves Cart Surfer into the Grotto cave
     name: 'Forest Village',
     width: W,
     height: H,
@@ -60,13 +61,13 @@ function plaza() {
       { x: 19, y: 9, w: 2, h: 1, to: 'dojo', tx: 20, ty: 20, label: 'Main Dojo' },
       { x: 6, y: 9, w: 2, h: 1, to: 'ramen', tx: 20, ty: 20, label: 'Ramen House' },
       { x: 37, y: 10, w: 1, h: 2, to: 'sports-park', tx: 1, ty: 13, label: 'Sports Park' },
+      { x: 13, y: 23, w: 2, h: 1, to: 'grotto', tx: 14, ty: 21, label: 'Grotto' },
     ],
     // Minigame spots (pavilions). Admins add, move or remove these in the Map Editor.
     minigames: [
       { id: 'mg1', game: 'dojo-memory', x: 8, y: 15 },
       { id: 'mg2', game: 'sled-race', x: 3, y: 12 },
       { id: 'mg3', game: 'go-kart-race', x: 3, y: 18 },
-      { id: 'mg4', game: 'cart-surfer', x: 12, y: 18 },
       { id: 'mg5', game: 'fishing', x: 30, y: 16 },
     ],
     props: [
@@ -189,10 +190,49 @@ function sportsPark() {
   };
 }
 
+// Grotto: a rocky yard south of the Forest Village. The Cart Surfer cave is cut into the
+// north rock face. The cave floor is dirt; the cave prop draws the rock rim and the dark hollow.
+// Layout: cave hollow x 15-24, y 5-8; mouth at (19-20, 9); cart pavilion at (18, 5), pad (19, 7).
+function grotto() {
+  const GW = 40;
+  const g = grid('g');
+  rect(g, 0, 0, GW, 3, '#'); // rock wall along the top
+  rect(g, 0, 3, 1, H - 3, '#'); // west wall
+  rect(g, GW - 1, 3, 1, H - 3, '#'); // east wall
+  rect(g, 0, H - 1, GW, 1, '#'); // south wall, gap at the entrance
+  rect(g, 13, 23, 2, 1, ':'); // entrance (portal back to the village)
+  rect(g, 13, 3, 14, 7, '#'); // rock mass behind the cave (drawn by the cave prop)
+  rect(g, 15, 5, 10, 4, ':'); // cave floor
+  rect(g, 19, 9, 2, 1, ':'); // cave mouth onto the yard
+  rect(g, 13, 20, 2, 3, ':'); // path from the entrance into the yard
+  const trees = [];
+  for (let y = 3; y < H - 1; y++) for (const x of [0, GW - 1]) if (g[y][x] === '#') trees.push({ type: 'tree', x, y, style: y % 2 ? 'pine' : 'leafy' });
+  return {
+    id: 'grotto',
+    name: 'Grotto',
+    seedVersion: 7,
+    width: GW,
+    height: H,
+    tiles: rows(g),
+    spawn: { x: 14, y: 20 },
+    portals: [{ x: 13, y: 23, w: 2, h: 1, to: 'plaza', tx: 14, ty: 21, label: 'Forest Village' }],
+    minigames: [{ id: 'mg1', game: 'cart-surfer', x: 18, y: 5 }],
+    props: [
+      { type: 'forest', x: 0, y: 0, w: GW, h: 3 },
+      ...trees,
+      { type: 'cave', x: 13, y: 3, w: 14, h: 7 },
+      { type: 'lantern', x: 12, y: 9 },
+      { type: 'lantern', x: 27, y: 9 },
+      { type: 'sign', x: 17, y: 11, text: 'Cart Surfer Cave' },
+      { type: 'sign', x: 11, y: 21, text: 'Grotto' },
+    ],
+  };
+}
+
 // Bump SEED_VERSION and set seedVersion on a room to push a new starter layout to
 // existing servers on their next start (db.js keeps the old layout in room_versions).
 function seedRooms() {
-  return [plaza(), dojo(), ramen(), sportsPark()];
+  return [plaza(), dojo(), ramen(), sportsPark(), grotto()];
 }
-seedRooms.SEED_VERSION = 6;
+seedRooms.SEED_VERSION = 7;
 module.exports = seedRooms;
