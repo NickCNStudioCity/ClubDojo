@@ -202,6 +202,7 @@ function grotto() {
   rect(g, GW - 1, 3, 1, H - 3, '#'); // east edge
   rect(g, 0, H - 1, GW, 1, '#'); // south edge, gap at the entrance
   rect(g, 13, 23, 2, 1, ':'); // entrance (portal back to the village)
+  rect(g, GW - 1, 13, 1, 2, ':'); // east gap: path to the Mountain Town
   rect(g, 19, 9, 2, 1, ':'); // path from the cave door
   rect(g, 13, 10, 14, 1, ':'); // yard path across the front of the cave
   rect(g, 13, 11, 2, 12, ':'); // path down to the gate
@@ -212,7 +213,7 @@ function grotto() {
   return {
     id: 'grotto',
     name: 'Grotto',
-    seedVersion: 9,
+    seedVersion: 10, // v10 adds the east gap and portal to the Mountain Town
     width: GW,
     height: H,
     tiles: rows(g),
@@ -220,6 +221,7 @@ function grotto() {
     portals: [
       { x: 13, y: 23, w: 2, h: 1, to: 'plaza', tx: 14, ty: 21, label: 'Forest Village' },
       { x: 19, y: 9, w: 2, h: 1, to: 'cave', tx: 20, ty: 20, label: 'Cart Surfer Cave' },
+      { x: GW - 1, y: 13, w: 1, h: 2, to: 'mountain-town', tx: 1, ty: 13, label: 'Mountain Town' },
     ],
     minigames: [],
     props: [
@@ -265,10 +267,128 @@ function cave() {
   };
 }
 
+// Mountain Town: an alpine town at the foot of the mountain, east of the Grotto. Golden larches,
+// cobbled streets and three working buildings: the Trail Post (the Guide's journal), the Ember Lodge
+// (cocoa out front) and the Bathhouse (its hot spring pays you to stay). Art: shared/client/mountain-art.js.
+function mountainTown() {
+  const TW = 40;
+  const g = grid('g');
+  const S = (p) => { rect(g, p.x, p.y, p.w || 1, p.h || 1, '#'); return p; }; // a prop you cannot walk through
+  rect(g, 0, 0, TW, 4, '#'); // the mountain behind the town
+  rect(g, 12, 4, 2, 8, ':'); // trail north to the mountain gate
+  rect(g, 0, 12, TW, 2, ':'); // cobbled main street (both ends stay open)
+  rect(g, 3, 14, 11, 7, ':'); // town square
+  rect(g, 20, 14, 2, 8, ':'); // lane south into the larch grove
+  rect(g, 18, 20, 6, 2, ':'); // grove clearing
+  rect(g, 30, 14, 2, 1, ':'); // steps down to the hot spring
+  rect(g, 28, 15, 9, 5, ':'); // the hot spring (walkable: wade in)
+  for (const [x, y, w, h] of [[14, 15, 2, 2], [1, 15, 2, 3], [24, 14, 3, 1], [16, 19, 2, 1], [24, 19, 1, 2], [5, 21, 7, 1]]) rect(g, x, y, w, h, 'f');
+  const pines = [[1, 5], [2, 9], [14, 6], [1, 16], [1, 20], [2, 22], [13, 22], [16, 22], [27, 22], [34, 22], [38, 21], [38, 16], [38, 12]];
+  const larches = [[15, 8], [15, 17], [17, 18], [24, 16], [26, 19], [18, 15], [24, 22], [15, 21], [29, 21], [36, 21], [10, 22]];
+  const props = [
+    { type: 'alpine', x: 0, y: 0, w: TW, h: 4 },
+    { type: 'minegate', x: 11, y: 1, w: 4, h: 3 },
+    S({ type: 'lodge', style: 'trailpost', x: 3, y: 6, w: 8, h: 5, label: 'TRAIL POST' }),
+    S({ type: 'lodge', style: 'lodge', x: 16, y: 5, w: 10, h: 6, label: 'EMBER LODGE' }),
+    S({ type: 'lodge', style: 'bathhouse', x: 31, y: 6, w: 7, h: 5, label: 'BATHHOUSE' }),
+    S({ type: 'gondola', x: 27, y: 4, w: 4, h: 3, toX: 42, toY: -2 }),
+    { type: 'hotspring', x: 28, y: 15, w: 9, h: 5, warm: true },
+    S({ type: 'noticeboard', x: 5, y: 11, w: 2, h: 1 }),
+    S({ type: 'npc', npc: 'guide', x: 8, y: 11, name: 'Guide Yuki', gi: '#2f6d8c', headband: '#f5d33b', belt: 'brown', hat: true, hover: 'Talk to Guide Yuki' }),
+    S({ type: 'cocoacart', x: 17, y: 11, w: 3, h: 1 }),
+    S({ type: 'npc', npc: 'cocoa', x: 20, y: 11, name: 'Kiku', gi: '#a8532f', headband: '#fff1d6', belt: 'orange', hat: true, hover: 'Buy cocoa from Kiku' }),
+    S({ type: 'fountain', x: 7, y: 16, w: 3, h: 3 }),
+    S({ type: 'stall', x: 3, y: 14, w: 3, h: 1, awning: '#c0473a' }),
+    S({ type: 'stall', x: 11, y: 14, w: 3, h: 1, awning: '#2f8a8c' }),
+    S({ type: 'bench', x: 4, y: 19, w: 2, h: 1 }), S({ type: 'bench', x: 11, y: 19, w: 2, h: 1 }),
+    S({ type: 'bench', x: 19, y: 22, w: 2, h: 1 }), S({ type: 'bench', x: 22, y: 22, w: 2, h: 1 }),
+    S({ type: 'snowman', x: 25, y: 21 }), S({ type: 'snowman', x: 12, y: 17, variant: 1 }),
+    S({ type: 'woodpile', x: 27, y: 9, w: 3, h: 2 }), S({ type: 'skirack', x: 11, y: 10 }), S({ type: 'buckets', x: 27, y: 15 }),
+    S({ type: 'boulder', x: 34, y: 14, w: 2, h: 1 }), S({ type: 'boulder', x: 37, y: 18, w: 1, h: 2 }),
+    ...pines.map(([x, y]) => S({ type: 'pine', x, y })),
+    ...larches.map(([x, y]) => S({ type: 'larch', x, y })),
+    { type: 'flags', x: 11, y: 7.2, x2: 16, y2: 6.6, depth: 24 },
+    { type: 'flags', x: 26, y: 6.8, x2: 31, y2: 7.4, depth: 24 },
+    ...[[1, 11], [10, 14], [15, 11], [24, 14], [29, 11], [37, 11], [14, 20], [19, 19], [23, 19]].map(([x, y]) => ({ type: 'lamp', x, y })),
+    { type: 'sign', x: 4, y: 11, text: 'Mountain Town' },
+  ];
+  return {
+    id: 'mountain-town',
+    name: 'Mountain Town',
+    theme: 'alpine',
+    seedVersion: 12, // v12 is the alpine rebuild: working buildings, hot spring, Guide and cocoa
+    width: TW,
+    height: H,
+    tiles: rows(g),
+    spawn: { x: 3, y: 13 },
+    portals: [
+      { x: 0, y: 12, w: 1, h: 2, to: 'grotto', tx: 38, ty: 13, label: 'Grotto' },
+      { x: 12, y: 4, w: 2, h: 1, to: 'mountain-peak', tx: 12, ty: 21, label: 'Mountain Peak' },
+    ],
+    minigames: [],
+    props,
+  };
+}
+
+// Mountain Peak: the snowy summit reached through the mountain gate. The Summit Bell and the beacon
+// stand at the top, a campfire pays you to stay, and a frozen lake is quicker to cross than snow.
+function mountainPeak() {
+  const PW = 40;
+  const g = grid('.');
+  const S = (p) => { rect(g, p.x, p.y, p.w || 1, p.h || 1, '#'); return p; };
+  rect(g, 0, 0, PW, 4, '#'); // the summit ridge
+  rect(g, 0, 4, 1, H - 4, '#'); // west cliff
+  rect(g, PW - 1, 4, 1, H - 4, '#'); // east cliff
+  rect(g, 0, H - 1, PW, 1, '#'); // south edge
+  rect(g, 12, 14, 2, 10, ':'); // the trail up from the Mountain Town (portal at the bottom)
+  rect(g, 7, 13, 14, 1, ':'); // ridge walk
+  rect(g, 7, 8, 1, 5, ':'); // to the Sled Race pad
+  rect(g, 20, 8, 1, 5, ':'); // stone steps to the bell
+  for (let y = 12; y <= 21; y++) for (let x = 23; x <= 38; x++) {
+    if (((x - 30.5) / 7) ** 2 + ((y - 16.5) / 4.4) ** 2 <= 1) g[y][x] = '*'; // the frozen lake
+  }
+  const pines = [];
+  for (let y = 4; y < H - 1; y += 2) pines.push([0, y], [PW - 1, y + 1]);
+  pines.push([3, 6], [15, 20], [18, 22], [3, 14], [9, 22], [25, 22], [36, 22], [37, 10]);
+  const props = [
+    { type: 'alpine', x: 0, y: 0, w: PW, h: 4, high: true },
+    S({ type: 'bell', interact: 'bell', x: 18, y: 4, w: 5, h: 4, hover: 'Ring the Summit Bell' }),
+    S({ type: 'beacon', x: 25, y: 5, w: 2, h: 2 }),
+    S({ type: 'gondola', x: 33, y: 4, w: 4, h: 3, toX: 42, toY: 10 }),
+    S({ type: 'campfire', x: 7, y: 18, warm: 2 }),
+    S({ type: 'bench', x: 4, y: 18, w: 2, h: 1 }), S({ type: 'bench', x: 9, y: 18, w: 2, h: 1 }), S({ type: 'bench', x: 7, y: 20, w: 2, h: 1 }),
+    S({ type: 'woodpile', x: 3, y: 16, w: 2, h: 1 }),
+    S({ type: 'cairn', x: 15, y: 6 }), S({ type: 'cairn', x: 28, y: 9 }), S({ type: 'cairn', x: 23, y: 10 }),
+    S({ type: 'crystals', x: 36, y: 7, w: 2, h: 2 }), S({ type: 'crystals', x: 16, y: 16, w: 2, h: 2 }), S({ type: 'crystals', x: 2, y: 11, w: 2, h: 1 }),
+    S({ type: 'snowman', x: 22, y: 19 }), S({ type: 'snowman', x: 33, y: 21, variant: 1 }),
+    S({ type: 'boulder', x: 30, y: 7, w: 2, h: 2 }), S({ type: 'boulder', x: 10, y: 5, w: 3, h: 2 }), S({ type: 'boulder', x: 4, y: 21, w: 3, h: 1 }),
+    S({ type: 'slalom', x: 11, y: 9, color: '#e8453c' }), S({ type: 'slalom', x: 14, y: 11, color: '#2f6fd1' }), S({ type: 'slalom', x: 3, y: 9, color: '#2f6fd1' }),
+    ...pines.map(([x, y]) => S({ type: 'pine', x, y })),
+    { type: 'flags', x: 12, y: 4.8, x2: 18.4, y2: 4.6, depth: 24 },
+    { type: 'flags', x: 22.6, y: 4.6, x2: 33, y2: 5, depth: 24 },
+    { type: 'lamp', x: 11, y: 14 }, { type: 'lamp', x: 14, y: 19 }, { type: 'lamp', x: 21, y: 11 }, { type: 'lamp', x: 8, y: 10 },
+    { type: 'sign', x: 14, y: 14, text: 'Mountain Peak' },
+    { type: 'sign', x: 5, y: 8, text: 'Sled Race' },
+  ];
+  return {
+    id: 'mountain-peak',
+    name: 'Mountain Peak',
+    theme: 'summit',
+    seedVersion: 12,
+    width: PW,
+    height: H,
+    tiles: rows(g),
+    spawn: { x: 12, y: 20 },
+    portals: [{ x: 12, y: 23, w: 2, h: 1, to: 'mountain-town', tx: 12, ty: 6, label: 'Mountain Town' }],
+    minigames: [{ id: 'mg1', game: 'sled-race', x: 6, y: 6 }], // pad is (7, 8), at the top of its path
+    props,
+  };
+}
+
 // Bump SEED_VERSION and set seedVersion on a room to push a new starter layout to
 // existing servers on their next start (db.js keeps the old layout in room_versions).
 function seedRooms() {
-  return [plaza(), dojo(), ramen(), sportsPark(), grotto(), cave()];
+  return [plaza(), dojo(), ramen(), sportsPark(), grotto(), cave(), mountainTown(), mountainPeak()];
 }
-seedRooms.SEED_VERSION = 9;
+seedRooms.SEED_VERSION = 12;
 module.exports = seedRooms;

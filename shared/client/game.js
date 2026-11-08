@@ -67,6 +67,13 @@
     // Minigames run in an overlay inside this window (shared/client/minigames/host.js).
     const minigames = window.ClubDojoMinigames.createHost({ root: win, conn, h, toast: (m, bad) => toast(m, bad), getMe: () => state.me });
 
+    // The world map and fast travel (shared/client/atlas.js).
+    const atlas = window.ClubDojoAtlas.create({
+      root: win, hud, conn, world, h, toast: (m, bad) => toast(m, bad), getMe: () => state.me,
+      staleGame: () => !minigames.isOpen(),
+      onOpen: () => { closeEmotes(); state.pendingPortal = false; state.pendingSpot = null; state.pendingNpc = null; },
+    });
+
     function toast(msg, bad) {
       const t = h('div', { class: `toast${bad ? ' bad' : ''}` }, msg);
       toasts.append(t);
@@ -87,8 +94,6 @@
     ui.exits = h('nav', { class: 'exits', 'aria-label': 'Exits from this room' });
     ui.chatLog = h('div', { class: 'chat-log', role: 'log', 'aria-label': 'Room chat messages' });
     ui.chatInput = h('input', { type: 'text', placeholder: 'Say something... (Enter)', 'aria-label': 'Chat message', maxlength: P.LIMITS.chatMax });
-    ui.minimap = h('canvas', { width: 400, height: 240 });
-    ui.minimapPanel = h('div', { class: 'panel minimap', hidden: true }, ui.minimap);
     ui.emotePop = h('div', { class: 'panel emote-pop', hidden: true, role: 'toolbar', 'aria-label': 'Emotes' },
       EMOTE_KEYS.map((k, i) => h('button', { title: k, onclick: () => { doEmote(k); ui.emotePop.hidden = true; } }, P.EMOTES[k], h('kbd', {}, String(i + 1)))));
     ui.chat = h('section', { class: 'panel chat', 'aria-label': 'Room chat' },
@@ -108,9 +113,8 @@
         h('div', { class: 'xp', 'aria-hidden': 'true' }, ui.xpFill), ui.xpText),
       h('div', { class: 'panel room-tag', 'aria-label': 'Current room' }, ui.roomName, ui.online),
       h('div', { class: 'top-right' },
-        h('button', { class: 'panel minimap-btn', 'aria-label': 'Toggle mini map', onclick: () => { ui.minimapPanel.hidden = !ui.minimapPanel.hidden; drawMinimap(); } }, 'Map'),
+        h('button', { class: 'panel map-btn', title: 'World map (M)', 'aria-label': 'Open world map', onclick: () => atlas.open() }, h('span', { 'aria-hidden': 'true' }, '🗺️'), 'Map'),
         h('div', { class: 'panel coins', 'aria-label': 'Coins' }, ui.streak, h('span', { class: 'coin', 'aria-hidden': 'true' }), ui.coins)),
-      ui.minimapPanel,
       ui.exits,
       ui.quest = h('button', { class: 'panel quest', 'aria-label': 'Active quest. Open quest log.', onclick: openQuests },
         ui.questLabel = h('div', { class: 'label' }, 'Daily challenge'), ui.questTitle = h('b', {}, 'Earn your next belt'),
@@ -186,21 +190,6 @@
     function exitArrow(p) {
       return { left: '←', right: '→', up: '↑', down: '↓' }[World.portalEdge(state.room, p, 3)] || '⛩';
     }
-
-    function drawMinimap() {
-      if (ui.minimapPanel.hidden || !state.room) return;
-      const c = ui.minimap.getContext('2d');
-      const r = state.room;
-      const T = Math.min(ui.minimap.width / r.width, ui.minimap.height / r.height);
-      c.setTransform(1, 0, 0, 1, 0, 0);
-      c.clearRect(0, 0, ui.minimap.width, ui.minimap.height);
-      World.drawStatic(c, r, T);
-      for (const n of world.players.values()) {
-        c.fillStyle = n.id === state.me?.id ? '#e8453c' : '#2f6fd1';
-        c.beginPath(); c.arc(n.px * T, n.py * T, T * 0.7, 0, Math.PI * 2); c.fill();
-      }
-    }
-    setInterval(drawMinimap, 500);
 
     function chatLine(parts, cls) {
       const p = h('p', { class: cls || null }, parts);
@@ -451,6 +440,7 @@
     document.addEventListener('keydown', (e) => {
       if (state.phase !== 'game') return;
       if (minigames.isOpen()) return; // the minigame owns the keyboard
+      if (atlas.isOpen()) { atlas.key(e); return; }
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
       if (e.key === 'Escape') {
         if (modalOpen) { closeModal(); e.preventDefault(); return; }
@@ -461,6 +451,7 @@
       if (typing || modalOpen) return;
       if (!root.contains(e.target) && e.target !== document.body) return;
       if (e.key === 'Enter') { ui.chatInput.focus(); e.preventDefault(); }
+      if (e.key === 'm' || e.key === 'M') { atlas.open(); e.preventDefault(); return; }
       const n = Number(e.key);
       if (n >= 1 && n <= EMOTE_KEYS.length) doEmote(EMOTE_KEYS[n - 1]);
     });
@@ -468,12 +459,13 @@
     // ---------- server events ----------
     conn.on('room:enter', (m) => {
       state.room = m.room;
-      world.setRoom(m.room, m.players, m.you, { quiet: !!m.updated });
+      world.setRoom(m.room, m.players, m.you, { quiet: !!m.updated, held: atlas.traveling() });
+      atlas.roomChanged(m.room.id);
       state.pendingPortal = false;
       state.pendingNpc = null;
+      state.pendingSpot = null;
       renderRoomTag();
       renderExits();
-      drawMinimap();
       if (m.updated) toast(`${m.room.name} was just updated by a Grandmaster`);
       else chatLine(`You entered ${m.room.name}.`, 'sys');
       showGame();
@@ -493,7 +485,7 @@
       chatLine(`📣 ${m.from}: ${m.text}`, 'ann');
     });
     conn.on('mg:spots', (m) => { if (state.room && m.roomId === state.room.id) world.spotStatus = m.spots; });
-    conn.on('presence', (m) => { state.online = m.online; renderRoomTag(); });
+    conn.on('presence', (m) => { state.online = m.online; renderRoomTag(); atlas.refresh(); });
     conn.on('you', (m) => {
       const before = state.me;
       state.me = m.ninja;
@@ -538,6 +530,7 @@
       hud.hidden = false;
       renderHud();
       renderRoomTag();
+      atlas.prefetch();
       emit('game', state);
     }
 
@@ -547,6 +540,7 @@
       hud.hidden = true;
       banner.hidden = true;
       closeModal();
+      atlas.reset();
       world.setRoom(null, [], null);
       ui.chatLog.replaceChildren();
       renderConnect(message);

@@ -927,9 +927,14 @@
       this.cache = room ? { floor: floorOf(room), covered: coverMap(room) } : null;
       this.theme = room ? themeOf(room, this.cache.floor) : 'forest';
       this.particles = [];
-      if (!opts.quiet) this.enteredAt = performance.now();
+      // A map trip holds the fade and title until the map lifts (see reveal).
+      if (opts.held) this.enteredAt = -1e9;
+      else if (!opts.quiet) { this.enteredAt = performance.now(); this.skipFade = false; }
       this.layout();
     }
+
+    // Show the room title now, without the fade from black: the map is what is fading away.
+    reveal() { this.enteredAt = performance.now(); this.skipFade = true; }
 
     // Hour of day used for lighting. Tests and screenshots can pin it with world.hourOverride.
     hour() {
@@ -1123,7 +1128,7 @@
       ctx.fillStyle = vg;
       ctx.fillRect(0, 0, vw, vh);
       const age = now - (this.enteredAt || -1e9);
-      if (age < 450) {
+      if (age < 450 && !this.skipFade) {
         ctx.fillStyle = `rgba(10,16,24,${1 - age / 450})`;
         ctx.fillRect(0, 0, vw, vh);
       }

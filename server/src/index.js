@@ -13,10 +13,12 @@ const filter = require('./filter');
 const minigameRegistry = require('./minigames/registry');
 const { createEngine } = require('./minigames/engine');
 const progress = require('./progress');
+const mountain = require('./mountain');
 const updater = require('../../shared/updater');
 
 const JOIN_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const IDLE_KICK_MS = 30 * 60 * 1000;
+const MOUNTAIN_ROOMS = new Set(['mountain-town', 'mountain-peak']);
 
 function randomCode(len, alphabet) {
   const bytes = crypto.randomBytes(len);
@@ -112,6 +114,7 @@ function start(options = {}) {
     return {
       id: s.account.id, name: s.ninja.name, color: s.ninja.color, headband: s.ninja.headband,
       belt: s.ninja.belt, role: s.account.role, x: s.x, y: s.y,
+      accessories: progressOf(s).mountain.scarf ? { body: 'summit-scarf' } : undefined,
     };
   }
   function privateNinja(s) {
@@ -121,7 +124,37 @@ function start(options = {}) {
       mutedUntil: s.account.muted_until,
       daily: progress.summary(progressOf(s), progress.dayKey(), challengeGames()),
       beltTest: progress.beltTest(s.ninja, beltRecord(s)),
+      mountain: mountain.summary(progressOf(s), progress.dayKey(), rooms, currentBeacon()),
     };
+  }
+
+  // ---------- Mountain Town and Peak: finds, the Summit Bell, the beacon, warming up ----------
+  let beacon = null;
+  function currentBeacon() {
+    const day = progress.dayKey();
+    if (!beacon || beacon.day !== day) beacon = mountain.beaconFor(db.getJsonSetting('mountain_beacon'), day);
+    return beacon;
+  }
+  function saveBeacon() { db.setJsonSetting('mountain_beacon', beacon); }
+  function pushEveryone() { for (const t of authed()) pushYou(t); }
+  // Warm places pay a little every tick to ninjas who stay put, more with company.
+  function cozyTick() {
+    const day = progress.dayKey();
+    const lit = currentBeacon().lit;
+    const warm = authed().filter((s) => MOUNTAIN_ROOMS.has(s.roomId) && mountain.warmAt(rooms.get(s.roomId), s.x, s.y) && !minigames.lobbyOf(s.account.id));
+    for (const s of authed()) if (!warm.includes(s)) s.wasWarm = false;
+    for (const s of warm) {
+      // The first tick only notices you arrived, so walking through pays nothing.
+      if (!s.wasWarm) { s.wasWarm = true; continue; }
+      const state = progressOf(s);
+      const company = warm.some((o) => o !== s && o.roomId === s.roomId);
+      const coins = mountain.cozyTick(state, day, { company, beaconLit: lit });
+      if (!coins) continue;
+      saveProgress(s, state);
+      db.addRewards(s.account.id, coins, 1);
+      send(s, { t: 'mt:cozy', coins, company });
+      refreshOnline(s.account.id);
+    }
   }
 
   // ---------- progression: daily streak, daily challenges, belt tests ----------
@@ -171,14 +204,14 @@ function start(options = {}) {
     setTimeout(() => { if (target.account) { send(target, { t: 'progress', kind: 'streak', ...reward }); pushYou(target); } }, 900);
   }
   function roomPayload(room) {
-    const { id, name, width, height, tiles, portals, props, spawn, version } = room;
+    const { id, name, width, height, tiles, portals, props, spawn, version, theme } = room;
     const info = new Map(minigameRegistry.list().map((g) => [g.id, g]));
     const spots = (room.minigames || []).map((sp) => {
       const g = info.get(sp.game) || {};
       return { ...sp, name: g.name || sp.game, color: g.color || '#7a3b2e', icon: g.icon || '🥋' };
     });
     const doors = (portals || []).map((p) => (rooms.has(p.to) ? { ...p, label: rooms.get(p.to).name } : p));
-    return { id, name, width, height, tiles, portals: doors, props, spawn, version, minigames: spots, spotStatus: minigames.spotStatus(id) };
+    return { id, name, width, height, tiles, portals: doors, props, spawn, version, theme, minigames: spots, spotStatus: minigames.spotStatus(id) };
   }
   function worldSnapshot() {
     return {
@@ -229,6 +262,7 @@ function start(options = {}) {
     toRoom(room.id, { t: 'player:join', player: publicPlayer(s) }, s);
     presenceChanged();
     trackEvent(s, { type: 'visit', room: room.id });
+    if (MOUNTAIN_ROOMS.has(room.id) && mountain.noteVisitor(currentBeacon(), s.account.id)) { saveBeacon(); pushEveryone(); }
   }
 
   function leaveWorld(s) {
@@ -372,6 +406,42 @@ function start(options = {}) {
       enterRoom(s, p.to, p.tx, p.ty);
     },
 
+    // The world map: every place, how the places link up, who is there and what can be played.
+    // A full room is only sent for its preview picture when the client does not have that version.
+    'map:get'(s, m) {
+      const have = (m && m.have) || {};
+      const counts = minigames.lobbyCounts();
+      const info = new Map(minigameRegistry.list().map((g) => [g.id, g]));
+      return {
+        here: s.roomId,
+        rooms: [...rooms.values()].map((r) => ({
+          id: r.id,
+          name: r.name,
+          links: [...new Set((r.portals || []).map((p) => p.to))].filter((to) => rooms.has(to)),
+          players: inRoom(r.id).map((o) => ({ name: o.ninja.name, color: o.ninja.color, you: o === s })),
+          games: (r.minigames || []).map((sp) => {
+            const g = info.get(sp.game) || {};
+            const lobby = counts[P.spotKey(r.id, sp)];
+            return { name: g.name || sp.game, icon: g.icon || '🥋', color: g.color || '#7a3b2e', count: lobby ? lobby.count : 0 };
+          }),
+          preview: r.version != null && have[r.id] === r.version ? undefined : roomPayload(r),
+        })),
+      };
+    },
+
+    // Fast travel from the world map. Any place, from anywhere, unless a minigame is under way.
+    travel(s, m) {
+      const id = String((m && m.roomId) || '');
+      if (!rooms.has(id)) fail('bad', 'That place is not on the map.');
+      if (id === s.roomId) fail('here', 'You are already here.');
+      const lobby = minigames.lobbyOf(s.account.id);
+      if (lobby && lobby.phase !== 'lobby') fail('busy', 'Finish or leave the minigame first.');
+      const now = Date.now();
+      if (now - (s.lastTravel || 0) < 400) fail('slow', 'Catch your breath first.');
+      s.lastTravel = now;
+      enterRoom(s, id);
+    },
+
     chat(s, m) {
       const text = String(m.text || '').replace(/\s+/g, ' ').trim().slice(0, P.LIMITS.chatMax);
       if (!text) return;
@@ -415,7 +485,7 @@ function start(options = {}) {
     // test's requirements met. Promotes one belt and tells the whole village.
     'belt:test'(s) {
       const room = rooms.get(s.roomId);
-      const sensei = (room.props || []).find((p) => p.type === 'npc' && Math.max(Math.abs(p.x - s.x), Math.abs(p.y - s.y)) <= 2);
+      const sensei = (room.props || []).find((p) => p.type === 'npc' && !p.npc && Math.max(Math.abs(p.x - s.x), Math.abs(p.y - s.y)) <= 2);
       if (!sensei) fail('far', 'Find Sensei Oru in the Main Dojo to take your belt test.');
       const test = progress.beltTest(s.ninja, beltRecord(s));
       if (!test) fail('max', 'You already wear the Black Belt.');
@@ -426,6 +496,59 @@ function start(options = {}) {
       toAll({ t: 'celebrate', id: s.account.id, name: s.ninja.name, belt: test.belt, beltName: test.name, color: test.color });
       log(`[belt] ${s.account.username} passed the ${test.name} test`);
       return { belt: test.belt, name: test.name, coins: test.coins };
+    },
+
+    // ---------- Mountain Town and Peak ----------
+    'mt:gather'(s, m) {
+      const state = progressOf(s);
+      const got = mountain.gather(state, progress.dayKey(), rooms, s.roomId, { x: s.x, y: s.y }, String(m.id || ''));
+      if (!got) fail('gone', 'There is nothing to pick up here.');
+      saveProgress(s, state);
+      db.addRewards(s.account.id, got.coins, got.xp);
+      trackEvent(s, { type: 'find' }, { push: false });
+      refreshOnline(s.account.id, { lookChanged: got.journalComplete });
+      if (got.journalComplete) toAll({ t: 'mt:journal', id: s.account.id, name: s.ninja.name });
+      return got;
+    },
+
+    // The Summit Bell: once a day each. Every ring counts toward lighting the beacon.
+    'mt:ring'(s) {
+      const room = rooms.get(s.roomId);
+      const bell = (room.props || []).find((p) => p.interact === 'bell');
+      if (!bell || P.propDistance(bell, s.x, s.y) > 2) fail('far', 'Walk up to the Summit Bell to ring it.');
+      const state = progressOf(s);
+      const r = mountain.ring(state, progress.dayKey());
+      if (!r) fail('done', 'You have already rung the bell today. Come back tomorrow.');
+      saveProgress(s, state);
+      const b = currentBeacon();
+      const wasLit = b.lit;
+      const litNow = mountain.addRing(b, s.account.id);
+      saveBeacon();
+      if (wasLit) r.coins += mountain.BEACON_BONUS; // the beacon was already burning: join in the reward
+      db.addRewards(s.account.id, r.coins, r.xp);
+      toRoom(s.roomId, { t: 'mt:ring', id: s.account.id, name: s.ninja.name });
+      trackEvent(s, { type: 'bell' }, { push: false });
+      refreshOnline(s.account.id);
+      if (litNow) {
+        for (const id of b.ringers) { db.addRewards(id, mountain.BEACON_BONUS, 5); refreshOnline(id); }
+        toAll({ t: 'mt:beacon', name: s.ninja.name });
+        log(`[mountain] ${s.account.username} lit the summit beacon`);
+      }
+      pushEveryone();
+      return { ...r, lit: litNow };
+    },
+
+    'mt:cocoa'(s) {
+      const room = rooms.get(s.roomId);
+      const vendor = (room.props || []).find((p) => p.npc === 'cocoa');
+      if (!vendor || P.propDistance(vendor, s.x, s.y) > 2) fail('far', 'Walk up to the cocoa cart.');
+      if (s.ninja.coins < mountain.COCOA_PRICE) fail('coins', `Cocoa costs ${mountain.COCOA_PRICE} coins.`);
+      const state = progressOf(s);
+      if (!mountain.buyCocoa(state, progress.dayKey())) fail('done', 'You have already had your cocoa today.');
+      saveProgress(s, state);
+      db.addRewards(s.account.id, -mountain.COCOA_PRICE, 0);
+      refreshOnline(s.account.id);
+      return {};
     },
 
     // ---------- minigames ----------
@@ -729,6 +852,7 @@ function start(options = {}) {
   const ticker = setInterval(() => { for (const s of sessions) s.msgCount = 0; }, 1000);
   // Ninjas who stay online past midnight still get the next day's streak reward.
   const dailyTimer = setInterval(() => { for (const s of authed()) claimDaily(s); }, 60 * 1000);
+  const cozyTimer = setInterval(cozyTick, mountain.COZY_TICK_MS);
   const heartbeat = setInterval(() => {
     const now = Date.now();
     for (const s of sessions) {
@@ -790,7 +914,7 @@ function start(options = {}) {
     get online() { return authed().length; },
     ready: new Promise((resolve, reject) => { wss.once('listening', resolve); wss.once('error', reject); }),
     close() {
-      clearInterval(ticker); clearInterval(dailyTimer); clearInterval(heartbeat); clearInterval(discoveryTimer); clearTimeout(presenceTimer);
+      clearInterval(ticker); clearInterval(dailyTimer); clearInterval(cozyTimer); clearInterval(heartbeat); clearInterval(discoveryTimer); clearTimeout(presenceTimer);
       minigames.shutdown();
       for (const s of sessions) { savePosition(s); s.account = null; s.ws.terminate(); }
       closed = true;

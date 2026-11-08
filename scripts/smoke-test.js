@@ -197,6 +197,32 @@ const expectError = async (p, code) => {
     await mika.waitFor((m) => m.t === 'room:enter' && m.room.id === 'ramen', 2000, 'mika to ramen');
   });
 
+  await check('world map lists places and only sends previews the client lacks', async () => {
+    const map = await mika.req('map:get');
+    assert(map.here === 'ramen', `map here is ${map.here}`);
+    const plaza = map.rooms.find((r) => r.id === 'plaza');
+    assert(plaza && plaza.links.includes('dojo') && plaza.links.includes('ramen'), 'plaza links');
+    assert(map.rooms.find((r) => r.id === 'ramen').players.some((p) => p.you), 'you are listed in your room');
+    assert(plaza.preview && plaza.preview.tiles, 'first fetch has the room preview');
+    const have = Object.fromEntries(map.rooms.map((r) => [r.id, r.preview.version]));
+    const again = await mika.req('map:get', { have });
+    assert(again.rooms.every((r) => !r.preview), 'known versions are not resent');
+  });
+
+  await check('fast travel moves a ninja and tells both rooms', async () => {
+    await expectError(mika.req('travel', { roomId: 'nowhere' }), 'bad');
+    await expectError(mika.req('travel', { roomId: 'ramen' }), 'here');
+    await mika.req('travel', { roomId: 'grotto' });
+    await mika.waitFor((m) => m.t === 'room:enter' && m.room.id === 'grotto', 2000, 'mika to grotto');
+    await expectError(mika.req('travel', { roomId: 'cave' }), 'slow');
+    await new Promise((r) => setTimeout(r, 450));
+    await mika.req('travel', { roomId: 'plaza' });
+    await mika.waitFor((m) => m.t === 'room:enter' && m.room.id === 'plaza', 2000, 'mika to plaza');
+    await new Promise((r) => setTimeout(r, 450));
+    await mika.req('travel', { roomId: 'ramen' }); // back where the later checks expect her
+    await mika.waitFor((m) => m.t === 'room:enter' && m.room.id === 'ramen', 2000, 'mika back to ramen');
+  });
+
   await check('admin gives coins and sets a belt; the player sees it', async () => {
     const { players } = await admin.req('admin:players', { text: 'kai' });
     const id = players[0].id;
