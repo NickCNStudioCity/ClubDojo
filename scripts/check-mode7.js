@@ -136,5 +136,48 @@ test('the whole track, walls included, fits inside the padded floor image', () =
   for (const p of T.TRACK.pts) assert.ok(p.x - m >= 0 && p.y - m >= 0 && p.x + m <= T.WORLD.w && p.y + m <= T.WORLD.h, `point ${p.x},${p.y}`);
 });
 
+console.log('Checking scenery');
+const SC = require('../shared/client/minigames/games/go-kart-mode7/scenery');
+
+test('props are the same on every run (seeded), and there is a fair number of each kind', () => {
+  const a = SC.placeProps(T, { pad: 80 });
+  const b = SC.placeProps(T, { pad: 80 });
+  assert.deepStrictEqual(a, b);
+  for (const kind of ['tree', 'pine', 'bush', 'tyres']) {
+    assert.ok(a.filter((p) => p.kind === kind).length >= 4, `only ${a.filter((p) => p.kind === kind).length} ${kind}`);
+  }
+  assert.ok(a.length < 400, `${a.length} props is a lot to sort every frame`);
+});
+
+test('no prop stands on the road or inside the walls, and all sit on the floor image', () => {
+  const wall = T.HALF_WIDTH + T.WALL_MARGIN + 4;
+  for (const p of SC.placeProps(T, { pad: 80 })) {
+    const d = T.nearest(p.x, p.y).d;
+    assert.ok(d > wall, `${p.kind} at ${p.x.toFixed(0)},${p.y.toFixed(0)} is ${d.toFixed(1)} from the centreline`);
+    // Floor image covers -100..WORLD+100 (TEX_PAD in go-kart-race.js).
+    assert.ok(p.x >= -100 && p.y >= -100 && p.x <= T.WORLD.w + 100 && p.y <= T.WORLD.h + 100, `${p.kind} off the floor image`);
+  }
+});
+
+test('tyre stacks sit on the outside of bends', () => {
+  const tyres = SC.placeProps(T, { pad: 80 }).filter((p) => p.kind === 'tyres');
+  const cx = T.WORLD.w / 2, cy = T.WORLD.h / 2;
+  // The loop is roughly round, so "outside" mostly means further from the middle than the road.
+  const outside = tyres.filter((p) => {
+    const n = T.nearest(p.x, p.y);
+    return Math.hypot(p.x - cx, p.y - cy) > Math.hypot(n.px - cx, n.py - cy);
+  });
+  assert.ok(outside.length >= tyres.length * 0.7, `${outside.length} of ${tyres.length} outside`);
+});
+
+test('the start gantry posts stand outside the walls, across the road just past the line', () => {
+  const g = SC.gantry(T);
+  for (const p of [g.a, g.b]) assert.ok(T.nearest(p.x, p.y).d > T.HALF_WIDTH + T.WALL_MARGIN, 'post inside the wall');
+  const mid = T.nearest((g.a.x + g.b.x) / 2, (g.a.y + g.b.y) / 2);
+  assert.ok(mid.d < 10, `banner middle is ${mid.d} off the centreline`);
+  assert.ok(mid.s > 0 && mid.s < 150, `gantry at s=${mid.s}`);
+  assert.ok(g.low > 28, 'banner bottom must clear the camera (height up to 28)');
+});
+
 console.log(failures ? `\n${failures} problem(s) found.` : '\nMode 7 maths look good.');
 process.exitCode = failures ? 1 : 0;
