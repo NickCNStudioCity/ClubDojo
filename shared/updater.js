@@ -93,8 +93,9 @@ async function checkForUpdate({ kind, target, repo = DEFAULT_REPO, stateFile, fo
 }
 
 // Starts a detached Windows script that waits for this process to exit, moves the new file over
-// the old one (retrying while Windows still holds it), and starts it again. The caller must quit next.
-function applyUpdate(staged, { args = [] } = {}) {
+// the old one (retrying while Windows still holds it), and starts it again unless relaunch is false.
+// The caller must quit next.
+function applyUpdate(staged, { args = [], relaunch = true } = {}) {
   const { newFile, dest, target } = staged;
   const log = path.join(os.tmpdir(), 'clubdojo-update.log');
   const launchArgs = args.map((a) => `"${a}"`).join(' ');
@@ -121,7 +122,7 @@ function applyUpdate(staged, { args = [] } = {}) {
     '  goto move',
     ')',
     `if /i not "${target}"=="${dest}" del /F /Q "${target}" >nul 2>&1`,
-    `start "" "${dest}" ${launchArgs}`,
+    ...(relaunch ? [`start "" "${dest}" ${launchArgs}`] : []),
     ':end',
     '(goto) 2>nul & del "%~f0"',
     '',

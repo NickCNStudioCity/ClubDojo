@@ -69,6 +69,7 @@ module.exports = {
       ctx.broadcast({ type: 'over', players: snapshot() });
       ctx.end(ctx.players.map((p) => {
         const sl = sleds.get(p.id);
+        if (!sl) return { id: p.id, score: 0 }; // left mid-round; the engine drops this row
         const progress = Math.min(1, sl.y / s.trackLength);
         const bonus = sl.place ? (FINISH_POINTS[sl.place - 1] || 5) : 0;
         return { id: p.id, score: Math.round(progress * 100) + bonus, detail: { place: sl.place, hits: sl.hits.size } };

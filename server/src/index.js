@@ -609,7 +609,9 @@ function start(options = {}) {
     if (!m || typeof m.t !== 'string') return;
     s.lastActive = Date.now();
     s.msgCount = (s.msgCount || 0) + 1;
-    if (s.msgCount > 40) return; // flood guard, reset each second
+    // Flood guard, reset each second. Leaving a minigame always goes through: a player mashing
+    // keys in a game must never end up stuck in a lobby their client has already closed.
+    if (s.msgCount > 40 && m.t !== 'mg:leave') return;
 
     const reply = (ok, data) => { if (m.rid != null) send(s, { t: 'reply', rid: m.rid, ok, ...data }); };
     try {
@@ -768,11 +770,35 @@ function runCli() {
     server.ready.then(() => console.log('  Press Ctrl+C to save and stop the server.\n'));
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
-    if (autoUpdate) {
-      setInterval(() => checkForUpdate(false), 60 * 60 * 1000);
-      setInterval(installWhenIdle, 60 * 1000);
+    if (autoUpdate) setInterval(() => checkForUpdate(false), 60 * 60 * 1000);
+    // Also runs with --no-update, so a build staged by the "reinstall" command still gets installed.
+    if (packaged) setInterval(installWhenIdle, 60 * 1000);
+  };
+
+  // Typed commands in the console window. "reinstall" fetches the latest release now and
+  // installs it right away when nobody is online, otherwise as soon as the last player leaves.
+  const runCommand = async (line) => {
+    const cmd = line.trim().toLowerCase();
+    if (!cmd) return;
+    if (cmd === 'reinstall') {
+      if (!packaged) { console.log('  reinstall only works in the packaged ClubDojo-Server.exe build.'); return; }
+      if (checking) { console.log('  An update check is already running. Try again in a moment.'); return; }
+      if (!pending) {
+        console.log('  Checking GitHub for the latest release...');
+        await checkForUpdate(true);
+      }
+      if (!pending) { console.log('  No download was staged. See the messages above.'); return; }
+      console.log(`  ${pending.asset.name} is ready.`);
+      await installWhenIdle();
+      if (pending) console.log(`  Waiting for everyone to leave before installing ${pending.asset.name}.`);
+    } else if (cmd === 'help') {
+      console.log('  Commands: reinstall (fetch and install the latest release), help');
+    } else {
+      console.log(`  Unknown command "${cmd}". Type help for the list.`);
     }
   };
+  require('node:readline').createInterface({ input: process.stdin, terminal: false })
+    .on('line', (line) => runCommand(line).catch((e) => console.log(`  Command failed: ${e.message}`)));
 
   (async () => {
     if (autoUpdate || reinstall) {

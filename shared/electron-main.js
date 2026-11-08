@@ -12,6 +12,7 @@ function createApp({ client, title, width, height, minWidth, minHeight, indexFil
   let win = null;
   let udp = null;
   let updating = false;
+  let staged = null; // a downloaded build the user chose to install on quit
   // Portable builds: electron-builder sets this to the .exe the player double-clicked.
   const exeFile = process.env.PORTABLE_EXECUTABLE_FILE || null;
   const kind = client === 'admin' ? 'Admin' : 'Player';
@@ -19,6 +20,10 @@ function createApp({ client, title, width, height, minWidth, minHeight, indexFil
   // One update check. A newer build (or a forced reinstall) is downloaded, then the app restarts into it.
   async function updateNow({ force = false, interactive = false } = {}) {
     if (updating) return;
+    if (staged && !force) {
+      if (interactive) dialog.showMessageBox({ message: `${staged.asset.name} is downloaded and installs when you close ClubDojo.` });
+      return;
+    }
     updating = true;
     try {
       if (!exeFile) {
@@ -29,7 +34,16 @@ function createApp({ client, title, width, height, minWidth, minHeight, indexFil
         kind, target: exeFile, force, stateFile: path.join(app.getPath('userData'), 'update-state.json'),
         log: (m) => console.log(`[update] ${m}`),
       });
-      if (r.status === 'staged') { updater.applyUpdate(r); app.quit(); return; }
+      if (r.status === 'staged') {
+        // Never close the game on someone without asking. "Later" installs it when they quit.
+        const { response } = await dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
+          type: 'info', buttons: ['Restart now', 'Later'], defaultId: 0, cancelId: 1,
+          title: 'ClubDojo update', message: `${r.asset.name} is ready.`,
+          detail: 'Restart now to use it, or choose Later and it installs when you close ClubDojo.',
+        });
+        if (response === 0) { updater.applyUpdate(r); app.quit(); } else staged = r;
+        return;
+      }
       if (interactive) {
         dialog.showMessageBox({ message: r.status === 'no-release' ? 'No ClubDojo release was found on GitHub.' : 'You already have the latest version.' });
       }
@@ -86,6 +100,7 @@ function createApp({ client, title, width, height, minWidth, minHeight, indexFil
     setTimeout(() => updateNow(), 3000);
     setInterval(() => updateNow(), UPDATE_CHECK_MS);
   });
+  app.on('will-quit', () => { if (staged) { updater.applyUpdate(staged, { relaunch: false }); staged = null; } });
   app.on('window-all-closed', () => {
     if (udp) try { udp.close(); } catch {}
     app.quit();

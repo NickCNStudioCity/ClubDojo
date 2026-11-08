@@ -26,8 +26,8 @@ The files are not code-signed, so Windows SmartScreen may show "Windows protecte
 
 The packaged apps update themselves from the latest GitHub release (`NickCNStudioCity/ClubDojo`):
 
-- **Player and Admin** check at launch and every hour. A newer file is downloaded and installed, then the app restarts. The Player's game session is disconnected when that happens. Press **Alt** to show the menu bar, then **Updates > Check for updates** or **Updates > Reinstall latest version**.
-- **Server** checks at start and every hour. A new build is installed at start, or once nobody is online. Start it with `--reinstall` to download the latest release again, or with `--no-update` to turn checks off (or set `CLUBDOJO_NO_UPDATE=1`).
+- **Player and Admin** check at launch and every hour. A newer file is downloaded, then the app asks to restart. **Restart now** installs it straight away (a Player's game session is disconnected); **Later** installs it when you close the app. Press **Alt** to show the menu bar, then **Updates > Check for updates** or **Updates > Reinstall latest version**.
+- **Server** checks at start and every hour. A new build is installed at start, or once nobody is online. Start it with `--reinstall` to download the latest release again, or with `--no-update` to turn checks off (or set `CLUBDOJO_NO_UPDATE=1`). While it runs, type `reinstall` in its console window to fetch the latest release now (it installs once nobody is online), or `help` for the list.
 
 A build is detected by its file checksum, not its version number. So if you re-upload a file to the same release, the apps still pick it up. To publish: make a GitHub release marked **Latest**, and attach the three `.exe` files named `ClubDojo-Server-*`, `ClubDojo-Player-*` and `ClubDojo-Admin-*`. Updates only work for the packaged `.exe` files, not for `npm run` from source.
 

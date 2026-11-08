@@ -80,7 +80,7 @@ function createEngine({ db, registry, sendTo, toRoom, onRewarded, log = () => {}
     const key = P.spotKey(roomId, spot);
     let l = lobbies.get(key);
     if (!l) {
-      l = { key, roomId, spotId: spot.id, game, players: new Map(), hostId: id, phase: 'lobby', timers: new Set(), instance: null, endsAt: null };
+      l = { key, roomId, spotId: spot.id, spotAt: { x: spot.x, y: spot.y }, game, players: new Map(), hostId: id, phase: 'lobby', timers: new Set(), instance: null, endsAt: null };
       lobbies.set(key, l);
     }
     if (l.phase !== 'lobby') fail('busy', `${game.name} is in the middle of a round. Wait for it to finish.`);
@@ -237,11 +237,11 @@ function createEngine({ db, registry, sendTo, toRoom, onRewarded, log = () => {}
 
   // Close lobbies whose spot was removed or moved by a map edit.
   function syncRoom(room) {
-    const ids = new Set((room.minigames || []).map((s) => `${s.id}|${s.game}|${s.x}|${s.y}`));
     for (const l of [...lobbies.values()]) {
       if (l.roomId !== room.id) continue;
       const spot = (room.minigames || []).find((s) => s.id === l.spotId);
-      if (!spot || !ids.has(`${spot.id}|${spot.game}|${spot.x}|${spot.y}`) || spot.game !== l.game.id) close(l, 'This minigame spot was changed by a Grandmaster.');
+      const same = spot && spot.game === l.game.id && spot.x === l.spotAt.x && spot.y === l.spotAt.y;
+      if (!same) close(l, 'This minigame spot was changed by a Grandmaster.');
     }
   }
 
