@@ -34,12 +34,15 @@
   // Chase camera. At standstill it sits `behind` units back and `height` up; at top speed it pulls
   // back, rises a little and widens the view (lower focal), which reads as speed.
   const CAM = {
-    behind: 62, behindFast: 82, height: 24, heightFast: 28, focal: 236, focalFast: 204, horizon: 84,
+    behind: 62, behindFast: 82, height: 24, heightFast: 28, focal: 220, focalFast: 190, horizon: 84,
     turnFollow: 9,   // how fast the camera swings round behind the kart (per second, exponential)
     speedFollow: 3,  // how fast the speed effects catch up
-    refSpeed: 330,   // the server's default top speed on the road
+    refSpeed: 201,   // the server's top speed on the road, 45 mph
     shake: 0.9,      // off-road rumble in screen pixels at full speed
   };
+  // Track speed is in world units a second. 0.36 km/h per unit (so the top speed reads about 120 km/h
+  // at 330 units); converted to miles per hour here.
+  const MPH_PER_UNIT = 0.36 / 1.609344;
   const COLORS = { grass: '#3f8a3a', grass2: '#367d33', verge: '#7a9a3c', road: '#5b5f68', kerbA: '#e8453c', kerbB: '#f3efe2', wall: '#b9b1a0', sky1: '#4a98dc', sky2: '#bfe3f7' };
   const PROP_FAR_Z = 1300; // props further than this are skipped (tiny, and under the haze)
   const ordinal = (n) => `${n}${n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th'}`;
@@ -110,7 +113,7 @@
         if (i >= SPEED_BARS - 4) bar.classList.add(i >= SPEED_BARS - 2 ? 'max' : 'hot');
         bars.append(bar);
       }
-      const hudSpeed = h('div', { class: 'gk-speed' }, speedNum, h('small', {}, 'km/h'), bars);
+      const hudSpeed = h('div', { class: 'gk-speed' }, speedNum, h('small', {}, 'mph'), bars);
       const status = h('div', { class: 'gk-banner' }, 'Get ready...');
       const hud = h('div', { class: 'gk-hud' }, hudPlace, hudLap, hudTime, hudSpeed, status);
       hudSpeed.hidden = true;
@@ -463,21 +466,111 @@
           horizon: CAM.horizon + shake,
           width: VIEW_W, rows: VIEW_H,
         });
+        updateTyreEffects(dt);
         M7.renderFloor(cam, floor32, tex, grassPx);
         const top = Math.max(0, Math.floor(cam.horizon));
         g.putImageData(floor, 0, 0, 0, top, VIEW_W, VIEW_H - top);
         drawSky(cam);
 
         drawWorld(cam);
+        drawSmoke(cam);
         drawMinimap();
         updateSpeed(me);
+      }
+
+      // Tyre marks and tyre smoke on hard cornering. Sideways speed (speed x turn rate) tells how
+      // hard a kart is sliding. Marks are painted into the track image so they lie on the road;
+      // smoke is a short-lived puff that drifts up from the rear wheels.
+      const SKID_START = 260;     // sideways speed (units/s) where tyres start to slip
+      const SKID_FULL = 140;      // how far past SKID_START it takes to slip fully
+      const SKID_BACK = 5;        // world units behind the kart centre to the rear wheels
+      const SKID_SIDE = 4;        // world units from the kart centre line to each rear wheel
+      const SMOKE_MAX = 240;
+      const wheels = new Map();   // kart id -> { h, yaw, slip, puff, marks: [{x,y}|null, {x,y}|null] }
+      let smoke = [];
+
+      // Darkens one track-image point, by an amount 0..1, to draw a tyre mark.
+      function paintMark(x, y, amount) {
+        const cx = Math.floor((x - tex.ox) * tex.scale), cy = Math.floor((y - tex.oy) * tex.scale);
+        for (let j = -1; j <= 1; j++) {
+          for (let i = -1; i <= 1; i++) {
+            const tx = cx + i, ty = cy + j;
+            if (tx < 0 || ty < 0 || tx >= tex.w || ty >= tex.h) continue;
+            const o = ty * tex.w + tx;
+            const e = tex.data[o];
+            const a = amount * 0.6;
+            const mix = (c, to) => Math.round(c + (to - c) * a);
+            tex.data[o] = M7.rgba(mix(e & 255, 40), mix((e >>> 8) & 255, 38), mix((e >>> 16) & 255, 36));
+          }
+        }
+      }
+
+      // Paints the marks from the last point to this one (a short line, so fast slides stay unbroken).
+      function paintMarkLine(a, b, amount) {
+        const d = Math.hypot(b.x - a.x, b.y - a.y);
+        const steps = Math.max(1, Math.ceil(d / 0.7));
+        for (let i = 0; i <= steps; i++) paintMark(a.x + ((b.x - a.x) * i) / steps, a.y + ((b.y - a.y) * i) / steps, amount);
+      }
+
+      function updateTyreEffects(dt) {
+        if (!tex || dt <= 0) return;
+        for (const [id, k] of karts) {
+          if (!k.active || !k.inited) continue;
+          let w = wheels.get(id);
+          if (!w) { w = { h: k.shown.h, yaw: 0, slip: 0, puff: 0, marks: [null, null] }; wheels.set(id, w); }
+          // Turn rate, smoothed so the reading does not jump with each new snapshot.
+          const yawRate = wrapAngle(k.shown.h - w.h) / dt;
+          w.h = k.shown.h;
+          w.yaw += (yawRate - w.yaw) * (1 - Math.exp(-12 * dt));
+          const sideways = Math.abs(k.v || 0) * Math.abs(w.yaw);
+          const target = Math.min(1, Math.max(0, (sideways - SKID_START) / SKID_FULL));
+          w.slip += (target - w.slip) * (1 - Math.exp(-8 * dt));
+          if (w.slip < 0.2) { w.marks = [null, null]; continue; }
+
+          const fx = Math.cos(k.shown.h), fy = Math.sin(k.shown.h);
+          const wheelsAt = [-1, 1].map((s) => ({
+            x: k.shown.x - fx * SKID_BACK - fy * SKID_SIDE * s,
+            y: k.shown.y - fy * SKID_BACK + fx * SKID_SIDE * s,
+          }));
+          wheelsAt.forEach((p, i) => {
+            const prev = w.marks[i];
+            if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < 25) paintMarkLine(prev, p, w.slip);
+            else paintMark(p.x, p.y, w.slip);
+            w.marks[i] = p;
+          });
+
+          // Smoke: more of it the harder the slide.
+          w.puff += dt * (14 + 50 * w.slip);
+          while (w.puff >= 1) {
+            w.puff -= 1;
+            const p = wheelsAt[Math.random() < 0.5 ? 0 : 1];
+            smoke.push({ x: p.x, y: p.y, age: 0, life: 0.8 + Math.random() * 0.6, size: 1.8 + Math.random() * 1.2,
+              vx: (Math.random() - 0.5) * 6, vy: (Math.random() - 0.5) * 6 });
+          }
+        }
+        for (const p of smoke) { p.age += dt; p.x += p.vx * dt; p.y += p.vy * dt; }
+        smoke = smoke.filter((p) => p.age < p.life);
+        if (smoke.length > SMOKE_MAX) smoke.splice(0, smoke.length - SMOKE_MAX);
+      }
+
+      function drawSmoke(cam) {
+        for (const p of smoke) {
+          const pt = M7.project(cam, p.x, p.y);
+          if (!pt || pt.z < NEAR_Z || pt.z > TAG_MAX_Z) continue;
+          const t = p.age / p.life;
+          const r = (p.size + t * 5) * pt.scale;
+          const cy = pt.y - (1.5 + t * 10) * pt.scale; // the puff rises as it spreads
+          if (r < 0.5 || pt.x + r < 0 || pt.x - r > VIEW_W || cy + r < 0 || cy - r > VIEW_H) continue;
+          g.fillStyle = `rgba(236,236,232,${(0.5 * (1 - t)).toFixed(3)})`;
+          g.beginPath(); g.arc(pt.x, cy, r, 0, Math.PI * 2); g.fill();
+        }
       }
 
       let shownSpeed = -1;
       let shownBars = -1;
       function updateSpeed(me) {
-        const kmh = Math.round(Math.abs(me.v || 0) * 0.36); // about 120 at the road's top speed
-        if (kmh !== shownSpeed) { shownSpeed = kmh; speedNum.textContent = String(kmh); }
+        const mph = Math.round(Math.abs(me.v || 0) * MPH_PER_UNIT); // 45 at the road's top speed
+        if (mph !== shownSpeed) { shownSpeed = mph; speedNum.textContent = String(mph); }
         const lit = Math.round(Math.min(1, Math.abs(me.v || 0) / CAM.refSpeed) * SPEED_BARS);
         if (lit !== shownBars) {
           shownBars = lit;
